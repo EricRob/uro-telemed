@@ -61,16 +61,58 @@ def drop_rows(df):
 	# idk if i want to do this, I want to keep the procedure dates?
 	return df
 
-def add_columns(df):
+def add_columns(df, virtual_types):
 	df['referral_to_encounter'] = (df['encounter_date'] - df['referral_date']).dt.days
 	df['creation_to_encounter'] = (df['encounter_date'] - df['creation_date']).dt.days
+	df['is_virtual'] = df.visit_type.isin(virtual_types).astype(int)
+	df['encounter_id'] = df.index + 1
+
+	# to be filled in
+	df['virtual_before_procedure'] = 0
+
 	return df
 	# determine if mrn has encounter in target month
+
+def virtual_before_procedure(df, virtual_types):
+	mrns = df.mrn.unique()
+	for mrn in mrns:
+		visits = df[df.mrn == mrn]
+		has_virtual = min(visits.is_virtual.sum(), 1)
+		if len(visits.index) > 1 and has_virtual:
+			# procedure_visits = visits[visits.visit_category == 'Procedure']
+			# virtual_visits = visits[visits.is_virtual == 1]
+			# if len(procedure_visits.index) > 1 and len(virtual_visits.index) > 1:
+
+			# 	pdb.set_trace()
+			for provider in visits.provider.unique():
+				relevant_visits = visits[visits.provider == provider]
+				procedure_visits = relevant_visits[relevant_visits.visit_category == 'Procedure']
+
+				virtual_visits = relevant_visits[relevant_visits.is_virtual == 1]
+				if len(procedure_visits.index) > 1 and len(virtual_visits.index) > 1:
+					earliest_virtual = virtual_visits.encounter_date.min()
+					for index, row in procedure_visits.iterrows():
+						if row.encounter_date > earliest_virtual:
+							df.loc[df.encounter_id == row.encounter_id, 'virtual_before_procedure'] = 1
+	return df
+
+virtual_types = [
+	'NEW VIRTUAL VISIT',
+	'VIRTUAL VISIT',
+	'TELEMED HOME'
+	]
 
 
 df = pd.read_excel('data/sheet.xlsx')
 df = drop_columns(df)
 df = rename_columns(df)
+df.sort_values(['mrn', 'encounter_date'], inplace=True)
 df = drop_rows(df)
-df = add_columns(df)
+df = add_columns(df, virtual_types)
+df = virtual_before_procedure(df, virtual_types)
+# referral to new visit
+# scheduled date to actual date - complicated by cancellations and rescheduling
+# number of visits before procedure
+
+
 pdb.set_trace()
