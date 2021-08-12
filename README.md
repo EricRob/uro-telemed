@@ -7,7 +7,7 @@ Parsing data for a urology telemedicine project
 ## MRN
 
 | Variable         | Type             | Default    | Description  |
-| -------------------------------------------- | ---------------- | ---------- | -------------------------------------------------- |
+| -------------------------------------------- | ---------------- | ---------- | ----------------------------------------------------------------- |
 | provider\_list  | list of strings  | Empty list | list of all providers linked to a MRN |
 | icd\_list | list of strings  | Empty list | list of all icd codes linked to a MRN   |
 | encounters        | list of objects  | Empty list | list of all encounter objects linked to a MRN |
