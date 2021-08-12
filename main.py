@@ -127,6 +127,21 @@ class MRN(object):
         self.analyze_encounters(df)
 
     def create_encounters(self, df):
+        """
+        MRN
+        - earliest_completed_id
+        - earliest_completed_date
+        - earliest_completed_type
+
+        - has_any_new_visit
+        - has_completed_new_visit
+        
+        - new_visit_count
+        - complete_new_visit_count
+        - complete_visit_count
+        - total_visit_count
+
+        """
         for index, row in df.iterrows():
             encounter = Encounter(row)
 
@@ -159,6 +174,12 @@ class MRN(object):
             self.encounters[encounter.id] = encounter
         
     def determine_visit_type(self, encounter):
+        """
+        Encounter
+        - is_phone
+        - is_procedure
+        - is_virtual
+        """
         if encounter.is_virtual:
             return 'virtual'
         elif encounter.is_phone:
@@ -169,6 +190,10 @@ class MRN(object):
             return 'office'
 
     def analyze_encounters(self, df):
+        """
+        MRN
+        - earliest_new_type
+        """
         if self.has_any_new_visit:
             if self.earliest_new_date == self.earliest_virtual_date:
                 self.earliest_new_type = 'virtual'
@@ -186,6 +211,14 @@ class MRN(object):
         return
 
     def compare_dates(self):
+        """
+        MRN
+        - referral_to_earliest_new_encounter
+        - referral_to_earliest_completed_encounter
+        - referral_to_earliest_completed_virtual
+        - referral_to_earliest_completed_phone
+        """
+
         if self.has_completed_new_vist:
             self.referral_to_earliest_new_encounter = (self.earliest_new_date - self.earliest_referral_date).days
         if self.has_any_completed_visit:
@@ -197,6 +230,15 @@ class MRN(object):
         return
 
     def determine_conversions(self):
+        """
+        MRN
+        - conv_virtal_to_office
+        - conv_virtual_to_phone
+        - conv_phone_to_office
+        - conv_phone_to_virtual
+        - conv_office_to_virtual
+        - conv_office_to_phone
+        """
         for encounter_id in self.encounters:
             encounter = self.encounters[encounter_id]
             if encounter.is_office and encounter.is_completed:
@@ -221,6 +263,22 @@ class MRN(object):
         return
 
     def determine_dates(self, encounter):
+        """
+        MRN
+        - earliest_procedure_date
+        - earliest_procedure_id
+        - earliest_phone_date
+        - earliset_phone_id
+        - earliest_referral_date
+        - earliest_referral_id
+        - earliest_new_date
+        - earliest_virtual_date
+        - earliest_virtual_id
+        - has_new
+        - has_procedure
+        - has_phone
+        - has_virtual
+        """
         if encounter.is_completed:
                 # Determine if this is the earliest virtual encounter
                 if encounter.is_virtual:
