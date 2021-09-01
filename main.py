@@ -15,6 +15,8 @@ import numpy as np
 import pdb
 import pickle
 import csv
+import time
+import datetime
 
 ## Class declarations
 class Config(object):
@@ -59,9 +61,11 @@ class Config(object):
             'URO RN',
             'SCULL, DORIAN',
             'KEESLAR, MATTHEW',
-            'OLSON, ASHLEY J']
+            'OLSON, ASHLEY J',
+            'LANGMESSER, LISA M',
+            'SHREVES, HILARY A']
 
-        self.target_fiscal_month = 9 # March
+        self.target_fiscal_month = 0 # March = 9, 0 = off
 
 class MRN(object):
     """Top-level patient organization"""
@@ -80,10 +84,11 @@ class MRN(object):
         
         self.has_procedure = False
         self.has_phone = False
-        self.has_virtual = False
+        self.has_completed_virtual = False
         self.has_any_completed_visit = False
         self.has_completed_new_vist = False
         self.has_any_new_visit = False
+
 
         self.earliest_new_date = None
         self.earliest_virtual_date = None
@@ -105,6 +110,22 @@ class MRN(object):
 
         self.earliest_new_type = None
         self.earliest_completed_type = None
+        
+        self.earliest_new_icd = None
+        self.earliest_phone_icd = None
+        self.earliest_procedure_icd = None
+        self.earliest_office_icd = None
+        self.earliest_referral_icd= None
+        self.earliest_scheduling_icd = None
+        self.earliest_virtual_icd = None
+
+        self.earliest_new_icd_name = None
+        self.earliest_phone_icd_name = None
+        self.earliest_procedure_icd_name = None
+        self.earliest_office_icd_name = None
+        self.earliest_referral_icd_name = None
+        self.earliest_scheduling_icd_name = None
+        self.earliest_virtual_icd_name = None
 
         self.conv_virtual_to_office = False
         self.conv_virtual_to_phone = False
@@ -122,7 +143,26 @@ class MRN(object):
         self.complete_new_visit_count = 0
         self.total_visit_count = 0
         self.complete_visit_count = 0
+        self.cancellation_count = 0
+        self.complete_phone_visit_count = 0
+        self.cancelled_phone_visit_count = 0
+        self.complete_office_visit_count = 0
+        self.cancelled_office_visit_count = 0
+        self.complete_virtual_visit_count = 0
+        self.cancelled_virtual_visit_count = 0
+        self.complete_procedure_visit_count = 0
+        self.cancelled_procedure_visit_count = 0
+        
+        self.total_phone_visit_count = 0
+        self.total_office_visit_count = 0
+        self.total_virtual_visit_count = 0
+        self.total_procedure_visit_count = 0
 
+        self.payor_name = None
+        self.primary_diagnosis_icd = None # ICD diagnosis id of the earliest visit
+        self.primary_diagnosis_icd_name = None # ICD diagnosis name of the earliest visit
+
+        
         self.create_encounters(df)
         self.analyze_encounters(df)
 
@@ -140,15 +180,22 @@ class MRN(object):
         - complete_new_visit_count
         - complete_visit_count
         - total_visit_count
+        - cancellation_count
 
         """
         for index, row in df.iterrows():
             encounter = Encounter(row)
 
+            self.payor_name = encounter.payor
+
+            visit_type = self.determine_visit_type(encounter)
+
             if self.earliest_completed_id == None and encounter.is_completed:
                 self.earliest_completed_id = encounter.id
                 self.earliest_completed_date = encounter.date
-                self.earliest_completed_type = self.determine_visit_type(encounter)
+                self.earliest_completed_type = visit_type
+                self.primary_diagnosis_icd = encounter.icd_id
+                self.primary_diagnosis_icd_name = encounter.icd_name
 
             self.has_any_completed_visit = self.has_any_completed_visit or encounter.is_completed
             
@@ -158,6 +205,9 @@ class MRN(object):
                     self.has_completed_new_vist = True
 
             self.determine_dates(encounter)
+
+            self.update_visit_counts(encounter, visit_type)
+
             if row.referral_date not in self.referral_list:
                 self.referral_list.append(row.referral_date)
 
@@ -168,6 +218,9 @@ class MRN(object):
 
             if encounter.is_completed:
                 self.complete_visit_count += 1
+
+            if encounter.is_cancelled:
+                self.cancellation_count += 1
 
             self.total_visit_count += 1
 
@@ -189,6 +242,35 @@ class MRN(object):
         else:
             return 'office'
 
+    def update_visit_counts(self, encounter, visit_type):
+        if encounter.is_completed:
+            if visit_type == 'virtual':
+                self.complete_virtual_visit_count += 1
+            elif visit_type == 'phone':
+                self.complete_phone_visit_count += 1
+            elif visit_type == 'procedure':
+                self.complete_procedure_visit_count += 1
+            elif visit_type == 'office':
+                self.complete_office_visit_count += 1
+        elif encounter.is_cancelled:
+            if visit_type == 'virtual':
+                self.cancelled_virtual_visit_count += 1
+            elif visit_type == 'phone':
+                self.cancelled_phone_visit_count += 1
+            elif visit_type == 'procedure':
+                self.cancelled_procedure_visit_count += 1
+            elif visit_type == 'office':
+                self.cancelled_office_visit_count += 1
+        
+        if visit_type == 'virtual':
+            self.total_virtual_visit_count += 1
+        elif visit_type == 'phone':
+            self.total_phone_visit_count += 1
+        elif visit_type == 'procedure':
+            self.total_procedure_visit_count += 1
+        elif visit_type == 'office':
+            self.total_office_visit_count += 1
+
     def analyze_encounters(self, df):
         """
         MRN
@@ -205,10 +287,26 @@ class MRN(object):
                 # This is an unvetted assumption
                 self.earliest_new_type = 'office'
 
-
         self.determine_conversions()
         self.compare_dates()
+        self.set_binaries()
         return
+
+    def set_binaries(self):
+        self.has_completed_office = self.complete_office_visit_count > 0
+        self.has_completed_procedure = self.complete_procedure_visit_count > 0
+        self.has_completed_virtual = self.complete_virtual_visit_count > 0
+        self.has_completed_phone = self.complete_phone_visit_count > 0
+
+        self.has_cancelled_office = self.cancelled_office_visit_count > 0
+        self.has_cancelled_procedure = self.cancelled_procedure_visit_count > 0
+        self.has_cancelled_virtual = self.cancelled_virtual_visit_count > 0
+        self.has_cancelled_phone = self.cancelled_phone_visit_count > 0
+
+        self.has_any_office = self.total_office_visit_count > 0
+        self.has_any_procedure = self.total_procedure_visit_count > 0
+        self.has_any_virtual = self.total_virtual_visit_count > 0
+        self.has_any_phone = self.total_phone_visit_count > 0
 
     def compare_dates(self):
         """
@@ -223,7 +321,7 @@ class MRN(object):
             self.referral_to_earliest_new_encounter = (self.earliest_new_date - self.earliest_referral_date).days
         if self.has_any_completed_visit:
             self.referral_to_earliest_completed_encounter = (self.earliest_completed_date - self.earliest_referral_date).days
-        if self.has_virtual and self.has_any_completed_visit:
+        if self.has_completed_virtual and self.has_any_completed_visit:
             self.referral_to_earliest_completed_virtual = (self.earliest_virtual_date - self.earliest_referral_date).days
         if self.has_phone and self.has_any_completed_visit:
             self.referral_to_earliest_completed_phone = (self.earliest_phone_date - self.earliest_referral_date).days
@@ -242,7 +340,7 @@ class MRN(object):
         for encounter_id in self.encounters:
             encounter = self.encounters[encounter_id]
             if encounter.is_office and encounter.is_completed:
-                if self.has_virtual:
+                if self.has_completed_virtual:
                     if self.earliest_virtual_date < encounter.date:
                         self.conv_virtual_to_office = True
                     else:
@@ -269,15 +367,27 @@ class MRN(object):
         - earliest_procedure_id
         - earliest_phone_date
         - earliset_phone_id
+        - earliest_phone_icd
+        - earliest_phone_icd_name
         - earliest_referral_date
         - earliest_referral_id
+        - earliest_referral_icd
+        - earliest_referral_icd_name
         - earliest_new_date
+        - earliest_new_id
+        - earliest_new_icd
+        - earliest_scheduling_date
+        - earliest_scheduling_id
+        - earliest_scheduling_icd
+        - earliest_scheduling_icd_name
         - earliest_virtual_date
         - earliest_virtual_id
-        - has_new
+        - earliest_virtual_icd
+        - earliest_virtual_icd_name
         - has_procedure
         - has_phone
-        - has_virtual
+        - has_completed_virtual
+        - cancellation_count
         """
         if encounter.is_completed:
                 # Determine if this is the earliest virtual encounter
@@ -285,59 +395,87 @@ class MRN(object):
                     if self.earliest_virtual_date is None:
                         self.earliest_virtual_date = encounter.date
                         self.earliest_virtual_id = encounter.id
-                        self.has_virtual = True
+                        self.earliest_virtual_icd = encounter.icd_id
+                        self.earliest_virtual_icd_name = encounter.icd_name
+                        self.has_completed_virtual = True
                     else:
                         if encounter.date < self.earliest_virtual_date:
                             self.earliest_virtual_date = encounter.date
                             self.earliest_virtual_id = encounter.id
-
+                            self.earliest_virtual_icd = encounter.icd_id
+                            self.earliest_virtual_icd_name = encounter.icd_name
+                            
                 # Determine if this is the earliest procedure
                 if encounter.is_procedure:
                     if self.earliest_procedure_date is None:
                         self.earliest_procedure_date = encounter.date
                         self.earliest_procedure_id = encounter.id
+                        self.earliest_procedure_icd = encounter.icd_id
+                        self.earliest_procedure_icd_name = encounter.icd_name
                         self.has_procedure = True
                     else:
                         if encounter.date < self.earliest_procedure_date:
                             self.earliest_procedure_date = encounter.date
                             self.earliest_procedure_id = encounter.id
-
+                            self.earliest_procedure_icd = encounter.icd_id
+                            self.earliest_procedure_icd_name = encounter.icd_name
                 # Determine if this is the earliest new visit
                 if encounter.is_new:
                     if self.earliest_new_date is None:
                         self.earliest_new_date = encounter.date
-                        self.has_new = True
+                        self.earliest_new_id = encounter.id
+                        self.earliest_new_icd = encounter.icd_id
+                        self.earliest_new_icd_name = encounter.icd_name
+                        self.has_any_new_visit = True
                     else:
                         self.earliest_new_date = min(encounter.date, self.earliest_new_date)
+                        self.earliest_new_id = encounter.id
+                        self.earliest_new_icd = encounter.icd_id
+                        self.earliest_new_icd_name = encounter.icd_name
 
                 # Determine if this is the earliest phone visit
                 if encounter.is_phone:
                     if self.earliest_phone_date is None:
                         self.earliest_phone_date = encounter.date
                         self.earliest_phone_id = encounter.id
+                        self.earliest_phone_icd = encounter.icd_id
+                        self.earliest_phone_icd_name = encounter.icd_name
                         self.has_phone = True
                     else:
                         if encounter.date < self.earliest_phone_date:
                             self.earliest_phone_date = encounter.date
                             self.earliest_phone_id = encounter.id
+                            self.earliest_phone_icd = encounter.icd_id
+                            self.earliest_phone_icd_name = encounter.icd_name
+
+        if encounter.is_cancelled:
+            self.cancellation_count += 1
 
         # Determine if this is the earliest referral
         if self.earliest_referral_date is None:
             self.earliest_referral_date = encounter.referral_date
             self.earliest_referral_id = encounter.id
+            self.earliest_referral_icd = encounter.icd_id
+            self.earliest_referral_icd_name = encounter.icd_name
         else:
             if encounter.referral_date < self.earliest_referral_date:
                 self.earliest_referral_date = encounter.referral_date
                 self.earliest_referral_id = encounter.id
+                self.earliest_referral_icd = encounter.icd_id
+                self.earliest_referral_icd_name = encounter.icd_name
         
         # Determine if this is the earliest scheduling date
         if self.earliest_scheduling_date is None:
             self.earliest_scheduling_date = encounter.scheduling_date
             self.earliest_scheduling_id = encounter.id
+            self.earliest_scheduling_icd = encounter.icd_id
+            self.earliest_scheduling_icd_name = encounter.icd_name
         else:
             if encounter.scheduling_date < self.earliest_scheduling_date:
                 self.earliest_scheduling_date = encounter.scheduling_date
                 self.earliest_scheduling_id = encounter.id
+                self.earliest_scheduling_icd = encounter.icd_id
+                self.earliest_scheduling_icd_name = encounter.icd_name
 
 class Encounter(object):
     """One row in the original spreadsheet"""
@@ -407,7 +545,7 @@ def build_mrns(df, config):
     patients = {}
     for mrn in mrns:
         visits = df[df.mrn == mrn]
-        if config.target_fiscal_month in visits.fiscal_month.values:
+        if (config.target_fiscal_month in visits.fiscal_month.values) or config.target_fiscal_month == 0:
             patient = MRN(visits, config)
             patients[mrn] = patient
     return patients
@@ -416,16 +554,62 @@ def write_summary_csv(patients):
     # Currently very coarse, can improve to be more readable
     pt = next(iter(patients.values()))
     fieldnames = [*vars(pt).keys()]
+    fieldnames.remove('encounters')
     with open('data/summary.csv', 'w') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         for pt in patients:
-            writer.writerow(vars(patients[pt]))
-        
+            di = vars(patients[pt])
+            del di['encounters']
+            
+            writer.writerow(di)
     return
 
+def pt_satisfaction_csv(patients):
 
-def main()
+    header = ['mrn', 'name', 'start_date', 'end_date']
+    with open('data/satisfaction_mrns.csv', 'w') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(header)
+        for pt in patients:
+            earliest_enc_date = None
+            latest_enc_date = None
+            for enc in patients[pt].encounters:
+                encounter = patients[pt].encounters[enc]
+                count = 0
+                if earliest_enc_date is None:
+                    earliest_enc_date = encounter.date
+                    latest_enc_date = encounter.date
+                    count += 1
+                else:
+                    count += 1
+                    try:
+                        earliest_enc_date = min(encounter.date, earliest_enc_date)
+                        latest_enc_date = max(encounter.date, latest_enc_date)
+                    except:
+                        pdb.set_trace()
+            writer.writerow([patients[pt].mrn, patients[pt].pt_name, str(earliest_enc_date).split()[0], str(latest_enc_date).split()[0]])
+    return
+
+def update_fields(patients):
+    pt = next(iter(patients.values()))
+    fieldnames = [*vars(pt).keys()]
+
+    for pt in patients:
+        k = patients[pt]
+        ref_list = k.referral_list
+        refs = []
+        for ref in ref_list:
+            rewrite = str(ref).split()[0]
+            refs.append(rewrite)
+        k.referral_list = refs
+        for attr, value in k.__dict__.items():
+            pdb.set_trace()
+            print(attr, value)
+
+        pdb.set_trace()
+
+def main():
     ##
     ## Use the defined functions
     ##
@@ -445,6 +629,8 @@ def main()
         pickle.dump(patients, f, pickle.HIGHEST_PROTOCOL)
 
     # Write summary output
+    pt_satisfaction_csv(patients)
+    # update_fields(patients)
     write_summary_csv(patients)
 
 # Main body
