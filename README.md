@@ -17,7 +17,7 @@ Parsing data for a urology telemedicine project
 | has\_virtual  | boolean          | FALSE      | TRUE if completed virtual encounter exists |
 | has\_any\_completed\_visit                   | boolean          | FALSE      | TRUE if a completed encounter exists|
 | has\_completed\_new\_vist                    | boolean          | FALSE      | TRUE if completed new encounter exists |
-| has\_any\_new\_visit                         | boolean          | FALSE      | TRUE if \_\_any\_\_ new encounter exists (some patients have new type that never reached completed status) |
+| has\_any\_new\_visit                         | boolean          | FALSE      | TRUE if __any__ new encounter exists (some patients have new type that never reached completed status) |
 | earliest\_new\_date                          | DateTime         | Empty      | Earliest date of completed new encounter for MRN  |
 | earliest\_virtual\_date                      | DateTime         | Empty      | Earliest date of completed virtual encounter for MRN |
 | earliest\_procedure\_date                    | DateTime         | Empty      | Earliest date of completed procedure encounter for MRN |
@@ -42,7 +42,7 @@ Parsing data for a urology telemedicine project
 | conv\_office\_to\_virtual                    | boolean          | FALSE      | TRUE if there is an office encounter date after the earliest office encounter date |
 | conv\_phone\_to\_office | boolean          | FALSE      | TRUE if there is a phone encounter date after the earliest office encounter date |
 | conv\_phone\_to\_virtual                     | boolean          | FALSE      | TRUE if if there is a phone encounter date after the earliest virtual encounter date |
-| referral\_to\_earliest\_new\_encounter       | days             | None       | count of days between earliest referral date and earliest new date. --> Selected any new encounter, can be changed to earliest \_\_completed\_\_ new encounter |
+| referral\_to\_earliest\_new\_encounter       | days             | None       | count of days between earliest referral date and earliest new date. \*\*Selected any new encounter, can be changed to earliest __completed__ new encounter |
 | referral\_to\_earliest\_completed\_encounter | days             | None       | count of days between earliest referral date and earliest completed encounter of any type |
 | referral\_to\_earliest\_completed\_virtual   | days             | None       | count of days between earliest referral date and earliest completed virtual encouner |
 | referral\_to\_earliest\_completed\_phone     | days             | None       | count of days between earliest referral date and earliest completed phone encounter |
