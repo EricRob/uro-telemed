@@ -67,6 +67,21 @@ class Config(object):
 
         self.target_fiscal_month = 0 # March = 9, 0 = off
 
+        self.date_variables = [
+            'earliest_new_date',
+            'earliest_virtual_date',
+            'earliest_procedure_date',
+            'earliest_referral_date',
+            'earliest_phone_date',
+            'earliest_scheduling_date',
+            'earliest_office_date',
+            'earliest_completed_date']
+
+        self.list_variables = [
+        'visit_types',
+        'provider_list',
+        'icd_list' ]
+
 class MRN(object):
     """Top-level patient organization"""
     def __init__(self, df, config):
@@ -84,6 +99,7 @@ class MRN(object):
         
         self.has_procedure = False
         self.has_phone = False
+        self.has_office = False
         self.has_completed_virtual = False
         self.has_any_completed_visit = False
         self.has_completed_new_vist = False
@@ -448,6 +464,21 @@ class MRN(object):
                             self.earliest_phone_icd = encounter.icd_id
                             self.earliest_phone_icd_name = encounter.icd_name
 
+                # Determine if this is the earliest phone visit
+                if encounter.is_office:
+                    if self.earliest_office_date is None:
+                        self.earliest_office_date = encounter.date
+                        self.earliest_office_id = encounter.id
+                        self.earliest_office_icd = encounter.icd_id
+                        self.earliest_office_icd_name = encounter.icd_name
+                        self.has_office = True
+                    else:
+                        if encounter.date < self.earliest_office_date:
+                            self.earliest_office_date = encounter.date
+                            self.earliest_office_id = encounter.id
+                            self.earliest_office_icd = encounter.icd_id
+                            self.earliest_office_icd_name = encounter.icd_name
+
         if encounter.is_cancelled:
             self.cancellation_count += 1
 
@@ -550,7 +581,7 @@ def build_mrns(df, config):
             patients[mrn] = patient
     return patients
 
-def write_summary_csv(patients):
+def write_summary_csv(patients, config):
     # Currently very coarse, can improve to be more readable
     pt = next(iter(patients.values()))
     fieldnames = [*vars(pt).keys()]
@@ -561,9 +592,34 @@ def write_summary_csv(patients):
         for pt in patients:
             di = vars(patients[pt])
             del di['encounters']
+            di = adjust_fields(di, config.date_variables, config.list_variables)
             
             writer.writerow(di)
     return
+
+def adjust_fields(di, date_vars, list_vars):
+    try:
+        for date_var in date_vars:
+            if di[date_var] is not None:
+                di[date_var] = str(di[date_var]).split()[0]
+        for list_var in list_vars:
+            list_str = [str(element) for element in di[list_var]]
+            joined = ", ".join(list_str)
+            di[list_var] = joined
+        for key, item in di.items():
+            if type(item) is list:
+                if type(item[0]) is not str and type(item[0]) is not int:
+                    new_item = []
+                    for el in item:
+                        el = str(di[date_var]).split()[0]
+                        new_item.append(el)
+                    item = new_item
+                list_str = [str(element) for element in item]
+                joined = ", ".join(list_str)
+                di[key] = joined
+    except:
+        pdb.set_trace()
+    return di
 
 def pt_satisfaction_csv(patients):
 
@@ -631,7 +687,7 @@ def main():
     # Write summary output
     pt_satisfaction_csv(patients)
     # update_fields(patients)
-    write_summary_csv(patients)
+    write_summary_csv(patients, config)
 
 # Main body
 if __name__ == '__main__':
