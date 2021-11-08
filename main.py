@@ -19,7 +19,11 @@ import time
 import datetime
 import argparse
 import matplotlib.pyplot as plt
+import requests
+import json
 from scipy.stats import mannwhitneyu, f_oneway
+
+API_KEY = 'AIzaSyCpTf0wX7W76TAaA8BkcIcOfzDQb1raXOc'
 
 ## Class declarations
 class Config(object):
@@ -84,6 +88,22 @@ class Config(object):
         'visit_types',
         'provider_list',
         'icd_list' ]
+
+        self.zip_distances_filename = 'data/zip_distances.csv'
+        self.zip_distances = pd.read_csv(self.zip_distances_filename, usecols=[1,2,3])
+        self.zip_incomes_filename = 'data/zip_incomes.csv'
+        incomes = {}
+        with open(self.zip_incomes_filename, 'r') as csvfile:
+            reader = csv.reader(csvfile)
+            header = next(reader)
+            for row in reader:
+                if row[1] == '' or int(row[1]) < 0:
+                    row[1] = -1
+                zipcode = f'{int(row[0]):05}'
+                income = int(row[1])
+                incomes[zipcode] = income
+        self.zip_incomes = incomes
+
 
 class MRN(object):
     """Top-level patient organization"""
@@ -542,7 +562,89 @@ class PtClass(object):
 
         self.visits_until_first_procedure_count = self.calc_visits_until_first_procedure()
         self.conversions_to_in_person = self.calc_conversions_to_in_person()
+        self.organize_demographics()
 
+
+    def organize_demographics(self):
+            # pt.has_demo = True
+            # pt_demo = df.loc[df['MRN'] == demo_mrn].iloc[0]
+            # pt.race = pt_demo['Race']
+            # pt.zipcode = pt_demo['Postal Code']
+            # pt.marital_status = pt_demo['Marital Status']
+            # pt.language = pt_demo['Language']
+            # pt.county = pt_demo['County']
+            # pt.gender = pt_demo['Gender Identity']
+            # pt.age = pt_demo['Age in Years']
+            # pt.age_in_days = pt_demo['Age in Days']
+            # pt.birth_sex = pt_demo['Sex Assigned at Birth']
+            # pt.legal_sex = pt_demo['Legal Sex']
+            # pt.ethnic_group = pt_demo['Ethnic Group']
+        self.genders = []
+        self.zipcodes = []
+        self.zip_df = self.config.zip_distances
+        self.zip_distances = []
+        self.zip_durations = []
+        self.zip_incomes = []
+        self.ages = []
+        self.languages = []
+        self.marital_status = []
+        for mrn in self.pt_dict:
+            pt = self.pt_dict[mrn]
+            if pt.has_demo:
+                self.calculate_distances(pt)
+                if pt.zip_distance != 999999:
+                    self.zip_distances.append(int(pt.zip_distance))
+                    self.zip_durations.append(int(pt.zip_duration))
+                self.ages.append(pt.age)
+                self.languages.append(self.sort_language(pt))
+                self.marital_status.append(self.sort_marital_status(pt))
+                if str(pt.zipcode) in self.config.zip_incomes:
+                    self.zip_incomes.append(self.config.zip_incomes[str(pt.zipcode)])
+
+        self.config.zip_distances = self.zip_df
+
+
+    def sort_language(self, pt):
+        if pt.language == 'English':
+            return 0
+        elif pt.language == 'Spanish':
+            return 1
+        else:
+            return 2
+
+    def sort_marital_status(self, pt):
+        if pt.marital_status == 'Single':
+            return 0
+        elif pt.marital_status == 'Married':
+            return 1
+        elif pt.marital_status == '':
+            return -1
+        else:
+            return 2
+
+
+    def calculate_distances(self, pt):
+        if str(pt.zipcode) in self.zip_df['zipcode'].values:
+            row = self.zip_df.loc[self.zip_df['zipcode'] == str(pt.zipcode)]
+            pt.zip_distance = int(row.distance.values[0])
+            pt.zip_duration = int(row.duration.values[0])
+        else:
+            url = f'https://maps.googleapis.com/maps/api/directions/json?origin={pt.zipcode}&destination=OHSU&key={API_KEY}'
+            print(f'new zip: {pt.zipcode}')
+            payload={}
+            headers = {}
+            response = requests.request("GET", url, headers=headers, data=payload)
+            output = json.loads(response.text)
+            if len(output['routes']) > 0:
+                pt.zip_distance = output['routes'][0]['legs'][0]['distance']['value']
+                pt.zip_duration = output['routes'][0]['legs'][0]['duration']['value']
+            else:
+                pt.zip_distance = 999999
+                pt.zip_duration = 999999
+            d_add = {'zipcode': [str(pt.zipcode)], 'distance': [pt.zip_distance], 'duration': [pt.zip_duration]}
+            df_add = pd.DataFrame(data=d_add)
+            self.zip_df = self.zip_df.append(df_add, ignore_index=True)
+            self.zip_df.to_csv(self.config.zip_distances_filename)
     def calc_conversions_to_in_person(self):
         count = 0
         for mrn in self.pt_dict:
@@ -826,7 +928,29 @@ def update_fields(patients):
             pdb.set_trace()
             print(attr, value)
 
-        pdb.set_trace()
+def link_demographics(patients, df, config):
+    demo_mrns = df['MRN'].unique()
+    for mrn in patients:
+        pt = patients[mrn]
+        demo_mrn = f'{mrn:08}'
+        if demo_mrn in demo_mrns:
+            pt.has_demo = True
+            pt_demo = df.loc[df['MRN'] == demo_mrn].iloc[0]
+            pt.race = pt_demo['Race']
+            pt.zipcode = pt_demo['Postal Code']
+            pt.marital_status = pt_demo['Marital Status']
+            pt.language = pt_demo['Language']
+            pt.county = pt_demo['County']
+            pt.gender = pt_demo['Gender Identity']
+            pt.age = pt_demo['Age in Years']
+            pt.age_in_days = pt_demo['Age in Days']
+            pt.birth_sex = pt_demo['Sex Assigned at Birth']
+            pt.legal_sex = pt_demo['Legal Sex']
+            pt.ethnic_group = pt_demo['Ethnic Group']
+        else:
+            pt.has_demo = False
+        patients[mrn] = pt
+    # return patients
 
 def sort_patients(patients, config):
     no_new_visits = []
@@ -856,8 +980,6 @@ def sort_patients(patients, config):
 def compare_groups(virtual, office, phone):
     fig, axs = plt.subplots(3,2, tight_layout=True)
     labels = ['virtual', 'office', 'phone']
-
-
 
     # Number of days from referral to first completed visit
     draw_hist(axs[0,0],
@@ -893,7 +1015,11 @@ def compare_groups(virtual, office, phone):
     'Pts with procedure (%)',
     'Pts with cancelled appts (%)',
     'Visits until first procedure',
-    'Conversions to in-person'
+    'Conversions to in-person',
+    'Avg income (std)',
+    'Avg distance (std)',
+    'Avg duration (std)',
+    'Avg age (std)'
     ]
 
     cellText = []
@@ -942,12 +1068,40 @@ def compare_groups(virtual, office, phone):
     conversions_to_in_person = [f'{i*100:.2f}%' for i in conversions_to_in_person]
     conversions_to_in_person[1] = '-'
 
+    avg_income = [
+    f'{np.array(virtual.zip_incomes).mean()/1000:.1f} ({np.array(virtual.zip_incomes).std()/1000:.1f})',
+    f'{np.array(office.zip_incomes).mean()/1000:.1f} ({np.array(office.zip_incomes).std()/1000:.1f})',
+    f'{np.array(phone.zip_incomes).mean()/1000:.1f} ({np.array(phone.zip_incomes).std()/1000:.1f})'
+    ]
+
+    avg_distance = [
+    f'{np.array(virtual.zip_distances).mean()/1000:.1f} ({np.array(virtual.zip_distances).std()/1000:.1f})',
+    f'{np.array(office.zip_distances).mean()/1000:.1f} ({np.array(office.zip_distances).std()/1000:.1f})',
+    f'{np.array(phone.zip_distances).mean()/1000:.1f} ({np.array(phone.zip_distances).std()/1000:.1f})'
+    ]
+
+    avg_duration = [
+    f'{np.array(virtual.zip_durations).mean()/60:.1f} ({np.array(virtual.zip_durations).std()/60:.1f})',
+    f'{np.array(office.zip_durations).mean()/60:.1f} ({np.array(office.zip_durations).std()/60:.1f})',
+    f'{np.array(phone.zip_durations).mean()/60:.1f} ({np.array(phone.zip_durations).std()/60:.1f})'
+    ]
+
+    avg_age = [
+    f'{np.array(virtual.ages).mean():.1f} ({np.array(virtual.ages).std():.1f})',
+    f'{np.array(office.ages).mean():.1f} ({np.array(office.ages).std():.1f})',
+    f'{np.array(phone.ages).mean():.1f} ({np.array(phone.ages).std():.1f})'
+    ]
+
     cellText = [
     cancelled_procedures,
     patients_with_procedure,
     patients_with_cancelled_appts,
     visits_until_first_procedure,
-    conversions_to_in_person
+    conversions_to_in_person,
+    avg_income,
+    avg_distance,
+    avg_duration,
+    avg_age
     ]
 
     axs[2,1].table(cellText=cellText, rowLabels=rows, colLabels=columns, loc='center')
@@ -992,12 +1146,17 @@ def main(args):
         # Build and sort patient objects, dump them into a dictionary
         patients = build_mrns(df, config)
 
+        # Import demographic data spreadsheet
+        df = pd.read_excel('data/demographics.xlsx')
+
+        link_demographics(patients, df, config)
         # Save data off so the sorting and filtering only has to occur once
         with open('data/dump.pickle', 'wb') as f:
             print('Pickling summary data...')
             pickle.dump(patients, f, pickle.HIGHEST_PROTOCOL)
         
         print('Sorting patient data by visit type...')
+
     virtual, office, phone, no_new = sort_patients(patients, config)
         # sorted_patients = [virtual, office, phone, no_new]
         # with open('data/sorted_patients.pickle', 'wb') as f:
