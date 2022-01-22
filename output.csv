@@ -1,48 +1,48 @@
- ,virtual (N=558),office (N=1052),phone (N=64)
-Pts w/cancelled office procedure,21,24,1
->>General Urology  ,1,5,1
->>General Reconstructive Urology ,3,2,0
->>Oncology ,4,2,0
->>Stones ,1,0,0
->>Female Urology  ,0,1,0
->>Men's Health ,11,14,0
->>Gender-affirming Care  ,1,0,0
->>Unclassified ,0,0,0
-,,,
-Pts w/office procedure,131,111,12
->>General Urology  ,14,29,5
->>General Reconstructive Urology ,6,5,0
->>Oncology ,35,20,2
->>Stones ,8,6,5
->>Female Urology  ,1,6,0
->>Men's Health ,65,44,0
->>Gender-affirming Care  ,1,1,0
->>Unclassified ,1,0,0
-,,,
-Pts w/surgery,97,181,19
->>General Urology  ,13,68,3
->>General Reconstructive Urology ,7,5,1
->>Oncology ,34,52,3
->>Stones ,22,12,12
->>Female Urology  ,0,7,0
->>Men's Health ,16,14,0
->>Gender-affirming Care  ,5,22,0
->>Unclassified ,0,1,0
-,,,
-Pts with cancelled appts,74,155,10
-Visits until first procedure,1.08,1.14,1.00
-Conversions to in-person,40,-,7
-Avg income (std),67.5 (18.6),67.4 (18.7),64.1 (20.1)
-Avg distance (std),107.8 (248.8),107.6 (337.8),113.4 (118.6)
-Avg duration (std),75.5 (141.3),74.5 (193.5),81.2 (74.8)
-Avg age (std),48.3 (16.7),48.9 (17.9),67.1 (12.5)
-~~ Diagnosis Categories ~~,,,
-Totals,510,945,61
-General Urology ,101,287,14
-General Reconstructive Urology,27,24,5
-Oncology,101,166,18
-Stones,88,66,21
-Female Urology ,3,18,1
-Men's Health,120,243,0
-Gender-affirming Care ,70,141,2
-Unclassified,0,0,0
+ ,virtual (N=558),office (N=1052),phone (N=64),p-value
+Pts w/cancelled office procedure,21,24,1,
+>>General Urology  ,1,5,1,chi-square
+>>General Reconstructive Urology ,3,2,0,p  = 0.9138
+>>Oncology ,4,2,0,
+>>Stones ,1,0,0,
+>>Female Urology  ,0,1,0,
+>>Men's Health ,11,14,0,
+>>Gender-affirming Care  ,1,0,0,
+>>Unclassified ,0,0,0,
+,,,,
+Pts w/office procedure,131,111,12,
+>>General Urology  ,14,29,5,chi-square
+>>General Reconstructive Urology ,6,5,0,p  = 0.0000
+>>Oncology ,35,20,2,
+>>Stones ,8,6,5,
+>>Female Urology  ,1,6,0,
+>>Men's Health ,65,44,0,
+>>Gender-affirming Care  ,1,1,0,
+>>Unclassified ,1,0,0,
+,,,,
+Pts w/surgery,97,181,19,
+>>General Urology  ,13,68,3,chi-square
+>>General Reconstructive Urology ,7,5,1,p  = 0.9835
+>>Oncology ,34,52,3,
+>>Stones ,22,12,12,
+>>Female Urology  ,0,7,0,
+>>Men's Health ,16,14,0,
+>>Gender-affirming Care  ,5,22,0,
+>>Unclassified ,0,1,0,
+,,,,
+Pts with cancelled appts,74,155,10,
+Visits until first procedure,1.08,1.14,1.00,
+Conversions to in-person,40,-,7,
+Avg income (std),67.5 (18.6),67.4 (18.7),64.1 (20.1),
+Avg distance (std),107.8 (248.8),107.6 (337.8),113.4 (118.6),
+Avg duration (std),75.5 (141.3),74.5 (193.5),81.2 (74.8),
+Avg age (std),48.3 (16.7),48.9 (17.9),67.1 (12.5),
+~~ Diagnosis Categories ~~,,,,
+Totals,510,945,61,
+General Urology ,101,287,14,
+General Reconstructive Urology,27,24,5,
+Oncology,101,166,18,
+Stones,88,66,21,
+Female Urology ,3,18,1,
+Men's Health,120,243,0,
+Gender-affirming Care ,70,141,2,
+Unclassified,0,0,0,

@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import requests
 import re
 import json
-from scipy.stats import mannwhitneyu, f_oneway
+from scipy.stats import mannwhitneyu, f_oneway, ttest_ind, chi2_contingency
 from prettytable import PrettyTable
 
 API_KEY = 'AIzaSyCpTf0wX7W76TAaA8BkcIcOfzDQb1raXOc'
@@ -31,6 +31,8 @@ API_KEY = 'AIzaSyCpTf0wX7W76TAaA8BkcIcOfzDQb1raXOc'
 class Config(object):
     """Renaming and sorting conventions for this spreadsheet"""
     def __init__(self):        
+        self.helper_dir = os.path.join('helpers')
+        self.figures_dir = os.path.join('figures')
         self.columns = {
             'Patient OHSU MRN': 'mrn',
             'Patient Name': 'pt_name',
@@ -330,7 +332,6 @@ class MRN(object):
                 self.primary_diagnosis_icd = encounter.icd_id
                 self.primary_diagnosis_icd_name = encounter.icd_name
             elif encounter.is_completed and encounter.date < self.earliest_completed_date:
-                pdb.set_trace()
                 self.earliest_completed_id = encounter.id
                 self.earliest_completed_date = encounter.date
                 self.earliest_completed_type = visit_type
@@ -645,6 +646,9 @@ class PtClass(object):
         self.completed_procedures_by_cat = {}
         self.canceled_procedures_by_cat = {}
         self.surgeries_by_cat = {}
+        self.scheduling_to_first_visit_dxcat = {}
+        self.scheduling_to_first_procedure_dxcat = {}
+        self.first_visit_to_first_procedure_dxcat = {}
         for dx_cat in self.config.dx_category_list:            
             self.surgeries_by_cat[dx_cat] = {}
             self.surgeries_by_cat[dx_cat]['total'] = 0
@@ -657,6 +661,18 @@ class PtClass(object):
             self.canceled_procedures_by_cat[dx_cat] = {}
             self.canceled_procedures_by_cat[dx_cat]['total'] = 0
             self.canceled_procedures_by_cat[dx_cat]['count'] = 0
+
+            self.scheduling_to_first_visit_dxcat[dx_cat] = {}
+            self.scheduling_to_first_procedure_dxcat[dx_cat] = {}
+            self.first_visit_to_first_procedure_dxcat[dx_cat] = {}
+
+            self.scheduling_to_first_visit_dxcat[dx_cat]['arr'] = []
+            self.scheduling_to_first_procedure_dxcat[dx_cat]['arr'] = []
+            self.first_visit_to_first_procedure_dxcat[dx_cat]['arr'] = []
+
+            self.scheduling_to_first_visit_dxcat[dx_cat]['count'] = 0
+            self.scheduling_to_first_procedure_dxcat[dx_cat]['count'] = 0
+            self.first_visit_to_first_procedure_dxcat[dx_cat]['count'] = 0
 
         self.patients_with_completed_after_cancelled_procedure = 0
         self.first_visit_to_first_procedure_days = self.calc_first_visit_to_first_procedure_days()
@@ -684,8 +700,8 @@ class PtClass(object):
                 if pt.dx_cat == None:
                     pt.dx_cat = 'Unclassified'
                 self.pt_with_surgery += 1
-                self.surgeries_by_cat[pt.dx_cat]['total'] += 1
-                self.surgeries_by_cat[pt.dx_cat]['count'] += len(pt.all_surg_cpts)
+                self.surgeries_by_cat[pt.dx_cat]['total'] += len(pt.all_surg_cpts)
+                self.surgeries_by_cat[pt.dx_cat]['count'] += 1
 
         return
 
@@ -710,11 +726,12 @@ class PtClass(object):
         self.zip_durations = []
         self.zip_incomes = []
         self.ages = []
+        self.age_unknown = 0
         self.languages = []
         self.marital_status = []
         self.raw_marital_status = []
-        self.unique_race_list = []
         self.races = []
+        self.race_set = set()
         self.legal_sex = []
         self.ethnic_group = []
         self.diagnosis_cats = {}
@@ -755,9 +772,11 @@ class PtClass(object):
                 self.legal_sex.append('Unknown')
                 self.legal_sex_count += 1
                 self.raw_marital_status.append('Unknown')
+                self.marital_status.append('Unknown')
                 self.ethnic_group.append('Unknown')
-                self.languages.append('Unknown')
-                self.races.append('Unknown')
+                self.languages.append('Declined / Unknown')
+                self.races.append('Declined / Unknown')
+                self.age_unknown += 1
 
         self.config.zip_distances = self.zip_df
         self.lang_count = len(self.languages)
@@ -781,35 +800,87 @@ class PtClass(object):
         self.marital_status.count(2)/self.marital_count,
         ]
 
-        self.race_portions  = {}
-        for race in self.unique_race_list:
-            self.race_portions[race] = self.races.count(race) / self.race_count
-
     def sort_race(self, pt):
         if type(pt.race) is float:
-            return -1
+            pt.race = 'Declined / Unknown'
+            races = ['Declined / Unknown']
         else:
             self.race_count += 1
             races = pt.race.split('\n')
-            self.races.append(races[0])
-            for race in races:
-                if race not in self.unique_race_list:
-                    self.unique_race_list.append(race)
+
+            if len(races) > 1 and 'Unknown' in races:
+                races.remove('Unknown')
+            if len(races) > 1 and 'Declined' in races:
+                races.remove('Declined')
+            if 'Unknown' in races or 'Declined' in races:
+                pt.race = 'Declined / Unknown'
+            races.sort()
+
+        # Condense asian and pacific islander
+        consolidated_to_asianpi = ['Asian', 'Other Pacific Islander', 'Native Hawaiian']
+        is_asianpi = False
+        for consolidation in consolidated_to_asianpi:
+            if consolidation in races:
+                is_asianpi = True
+                races.remove(consolidation)
+        if is_asianpi:
+            races.append('Asian / Pacific Islander')
+
+        if len(races) > 1:
+            pt.race = 'Multiracial'
+        elif pt.ethnic_group == 'Hispanic':
+            if races[0] == 'White':
+                pt.race = 'White Hispanic'
+            else:
+                pt.race = 'Non-white Hispanic'
+        elif races[0] == 'White':
+            pt.race = 'White'
+        elif races[0] == 'Black':
+            pt.race = 'Black'
+        elif races[0] == 'Asian / Pacific Islander':
+            pt.race = 'Asian / Pacific Islander'
+        elif races[0] == 'American Indian / Alaska Native':
+            pt.race = 'American Indian / Alaska Native'
+        self.race_set.add(pt.race)
+        self.races.append(pt.race)
 
     def sort_legal_sex(self, pt):
         return
 
     def sort_language(self, pt):
-        if pt.language != 'English' and pt.language != 'Spanish':
-            return 'Other'
-        else:
+        try:
+            if type(pt.language) is float:
+                pt.language = 'Declined / Unknown'
+            elif pt.language == 'English':
+                pass
+            elif 'Unkno' in pt.language:
+                pt.language = 'Declined / Unknown'
+            elif 'want to answer' in pt.language:
+                pt.language = 'Declined / Unknown'
+            else:
+                pt.language = 'Other'
+
+
             return pt.language
+        except Exception as e:
+            pdb.set_trace()
+
 
     def sort_marital_status(self, pt):
-        if pt.marital_status != 'Single' and pt.marital_status != 'Married':
-            return 'Unknown'
+        knowns = ['Single', 'Married']
+
+        if type(pt.marital_status) is float:
+            pt.marital_status = 'Unknown'
+        elif pt.marital_status == 'Unknown' or pt.marital_status == 'Declined':
+            pt.marital_status = 'Unknown'
+        elif 'Domestic' in pt.marital_status:
+            pt.marital_status = 'Unmarried LTR'
+        elif pt.marital_status in knowns:
+            pass
         else:
-            return pt.marital_status
+            pdb.set_trace()
+        
+        return pt.marital_status
 
 
     def calculate_distances(self, pt):
@@ -893,7 +964,9 @@ class PtClass(object):
             if pt.has_procedure:
                 earliest_visit = pt.earliest_completed_date
                 first_procedure = pt.earliest_procedure_date
-                values.append((first_procedure - earliest_visit).days)
+                diff = (first_procedure - earliest_visit).days
+                values.append(diff)
+                self.first_visit_to_first_procedure_dxcat[pt.dx_cat]['arr'].append(diff)
         return values
 
     def calc_referral_to_first_visit_days(self):
@@ -903,7 +976,8 @@ class PtClass(object):
             if pt.has_any_completed_visit:
                 visit = pt.earliest_completed_date
                 referral_date = pt.earliest_referral_date
-                values.append((visit - referral_date).days)
+                diff = (visit - referral_date).days
+                values.append(diff)
         return values
 
     def calc_referral_to_first_procedure_days(self):
@@ -922,13 +996,19 @@ class PtClass(object):
         return values
 
     def calc_scheduling_to_first_visit_days(self):
+        self.sched_to_visit_zero_days = []
         values = []
         for mrn in self.pt_dict:
             pt = self.pt_dict[mrn]
-            if pt.has_procedure:
+            if pt.has_any_completed_visit:
                 scheduling_date = pt.earliest_scheduling_date
                 visit = pt.earliest_completed_date
-                values.append((visit - scheduling_date).days)
+                diff = (visit - scheduling_date).days
+                if diff < 3:
+                    self.sched_to_visit_zero_days.append(mrn)
+                values.append(diff)
+                self.scheduling_to_first_visit_dxcat[pt.dx_cat]['arr'].append(diff)
+
         return values
 
     def calc_scheduling_to_first_procedure_days(self):
@@ -938,7 +1018,9 @@ class PtClass(object):
             if pt.has_procedure:
                 scheduling_date = pt.earliest_scheduling_date
                 first_procedure = pt.earliest_procedure_date
-                values.append((first_procedure - scheduling_date).days)
+                diff = (first_procedure - scheduling_date).days
+                values.append(diff)
+                self.scheduling_to_first_procedure_dxcat[pt.dx_cat]['arr'].append(diff)
         return values
 
     def calc_cancelled_appointments(self):
@@ -1205,25 +1287,48 @@ def link_demographics(patients, df, config):
         patients[mrn] = pt
     # return patients
 
+def format_percentage_row(v_arr, o_arr, p_arr, p_val = None, p_type = None):
+    counts = [v_arr, o_arr, p_arr]
+    
+    title_row = []
+    for count in counts:
+        title_row.append(f'N = {np.sum(count)}')
+    title_row.append(p_type)
+    
+    row_data = [title_row]
+    
+    for i in range(v_arr.size):
+        to_add = []
+        for count in counts:
+            to_add.append(f'{count[i]} ({count[i]*100 / np.sum(count):.1f}%)')
+        if i == 0:
+            to_add.append(f'p = {p_val:.3f}')
+        row_data.append(to_add)
+
+    return row_data
+
 def demographics_table(virtual, office, phone, config):
-    header = ['virtual', 'office', 'phone']
-    empty_row = [['', '', '']]
-    rows = ['Age', 'Mean (SD)', 'Median (IQR)', 'Range', '',
+    header = [f'virtual (N={virtual.pt_count})', f'office (N={office.pt_count})', f'phone (N={phone.pt_count})', 'p-value']
+    empty_row = [['', '', '', '']]
+    rows = ['Age', 'Mean (SD)', 'Median (IQR)', 'Range', 'Unknown', '',
     'Legal Sex, n (%)', 'Male', 'Female', 'Unknown', '',
-    'Marital Status, n (%)', 'Single', 'Married', 'Other', 'Unknown', '',
+    'Marital Status, n (%)', 'Married', 'Single', 'Unknown', 'Unmarried LTR', '',
     'Ethnic Group, n (%)', 'Hispanic', 'Non-hispanic', 'Declined / Unknown', '',
-    'Race, n (%)', 'White', 'Black', 'Asian', 'Pacific Islander', 'Native American', 'Declined / Unknown', '',
-    'Language, n (%)', 'English', 'Spanish', 'Other', 'Unknown'
+    'Race, n (%)', 'American Indian/Alaska Native', 'Asian / Pacific Islander', 'Black', 'Declined / Unknown', 'Multiracial', 'Non-white Hispanic', 'White', 'White Hispanic', '',
+    'Language, n (%)', 'English', 'Interpreter Needed', 'Declined / Unknown'
     ]
 
     # 'Age', 'Mean (SD)', 'Median (IQR)', 'Range',
     v_age = np.array(virtual.ages)
     o_age = np.array(office.ages)
     p_age = np.array(phone.ages)
+
     age_data = [
-    [f'{v_age.mean():.1f} ({v_age.std():.1f})', f'{o_age.mean():.1f} ({o_age.std():.1f})', f'{p_age.mean():.1f} ({p_age.std():.1f})'],
-    [f'{np.median(v_age)} ({np.percentile(v_age, 25)}—{np.percentile(v_age, 75)})', f'{np.median(o_age)} ({np.percentile(o_age, 25)}—{np.percentile(o_age, 75)})', f'{np.median(p_age)} ({np.percentile(p_age, 25)}—{np.percentile(p_age, 75)})'],
-    [f'{v_age.min()}—{v_age.max()}', f'{o_age.min()}—{o_age.max()}', f'{p_age.min()}—{p_age.max()}']
+    [f'N = {len(v_age) + virtual.age_unknown}', f'N = {len(o_age) + office.age_unknown}', f'N = {len(p_age) + phone.age_unknown}', 't-test'],
+    [f'{v_age.mean():.1f} ({v_age.std():.1f})', f'{o_age.mean():.1f} ({o_age.std():.1f})', f'{p_age.mean():.1f} ({p_age.std():.1f})', f'p = {ttest_ind(v_age, o_age).pvalue:.3f}'],
+    [f'{np.median(v_age)} ({np.percentile(v_age, 25)}–{np.percentile(v_age, 75)})', f'{np.median(o_age)} ({np.percentile(o_age, 25)}–{np.percentile(o_age, 75)})', f'{np.median(p_age)} ({np.percentile(p_age, 25)}–{np.percentile(p_age, 75)})'],
+    [f'{v_age.min()}–{v_age.max()}', f'{o_age.min()}–{o_age.max()}', f'{p_age.min()}–{p_age.max()}'],
+    [virtual.age_unknown, office.age_unknown, phone.age_unknown]
     ]
 
     v_sex = np.array(virtual.legal_sex)
@@ -1235,10 +1340,14 @@ def demographics_table(virtual, office, phone, config):
     unique, p_counts = np.unique(p_sex, return_counts=True)
 
     # 'Legal Sex, n (%)', 'Male', 'Female', 'Unknown',
+    chi2, p, dof, ex = chi2_contingency([[v_counts[1], v_counts[0]], [o_counts[1], o_counts[0]]])
     legal_sex_data = [
+    [f'N = {len(v_sex)}', f'N = {len(o_sex)}', f'N = {len(p_sex)}', 'chi-square'],
+
     [f'{v_counts[1]} ({v_counts[1]*100  / v_sex.size:.1f}%)',
     f'{o_counts[1]} ({o_counts[1]*100  / o_sex.size:.1f}%)',
-    f'{p_counts[1]} ({p_counts[1]*100  / p_sex.size:.1f}%)'],
+    f'{p_counts[1]} ({p_counts[1]*100  / p_sex.size:.1f}%)',
+    f'p = {p:.3f}'],
 
     [f'{v_counts[0]} ({v_counts[0]*100  / v_sex.size:.1f}%)',
     f'{o_counts[0]} ({o_counts[0]*100  / o_sex.size:.1f}%)',
@@ -1249,31 +1358,17 @@ def demographics_table(virtual, office, phone, config):
     f'{p_counts[2]} ({p_counts[2]*100  / p_sex.size:.1f}%)']
     ]
 
-    v_marital = np.array(virtual.raw_marital_status)
-    o_marital = np.array(office.raw_marital_status)
-    p_marital = np.array(phone.raw_marital_status)
+    v_marital = np.array(virtual.marital_status)
+    o_marital = np.array(office.marital_status)
+    p_marital = np.array(phone.marital_status)
 
     v_unique, v_counts = np.unique(v_marital, return_counts=True)
     o_unique, o_counts = np.unique(o_marital, return_counts=True)
     p_unique, p_counts = np.unique(p_marital, return_counts=True)
-    # 'Marital Status, n (%)', 'Single', 'Married', 'Other', 'Unknown',
-    marital_status_data = [
-    [f'{v_counts[1]} ({v_counts[1]*100  / v_marital.size:.1f}%)',
-    f'{o_counts[2]} ({o_counts[2]*100  / o_marital.size:.1f}%)',
-    f'{p_counts[1]} ({p_counts[1]*100  / p_marital.size:.1f}%)'],
+    
+    chi2, p, dof, ex = chi2_contingency(np.vstack((o_counts, v_counts)))
+    marital_status_data = format_percentage_row(v_counts, o_counts, p_counts, p_val=p, p_type='chi-square')
 
-    [f'{v_counts[0]} ({v_counts[0]*100  / v_marital.size:.1f}%)',
-    f'{o_counts[0]} ({o_counts[0]*100  / o_marital.size:.1f}%)',
-    f'{p_counts[0]} ({p_counts[0]*100  / p_marital.size:.1f}%)'],
-
-    [f'{v_counts[3]} ({v_counts[3]*100  / v_marital.size:.1f}%)',
-    f'{o_counts[1] + o_counts[4]} ({(o_counts[1] + o_counts[4])*100  / o_marital.size:.1f}%)',
-    f'{p_counts[3]} ({p_counts[3]*100  / p_marital.size:.1f}%)'],
-
-    [f'{v_counts[2]} ({v_counts[2]*100  / v_marital.size:.1f}%)',
-    f'{o_counts[3] + o_counts[5]} ({(o_counts[3] + o_counts[5])*100  / o_marital.size:.1f}%)',
-    f'{p_counts[2]} ({p_counts[2]*100  / p_marital.size:.1f}%)']
-    ]
 
     # 'Ethnic Group', 'Hispanic', 'Non-hispanic', 'Declined / Unknown',
     v_ethnic = np.array(virtual.ethnic_group)
@@ -1284,14 +1379,20 @@ def demographics_table(virtual, office, phone, config):
     o_unique, o_counts = np.unique(o_ethnic, return_counts=True)
     p_unique, p_counts = np.unique(p_ethnic, return_counts=True)
 
+    chi_arr = np.array([[v_counts[0] + v_counts[3] + v_counts[4], v_counts[1], v_counts[2]],
+        [o_counts[0] + o_counts[3] + o_counts[4], o_counts[1], o_counts[2]]])
+    chi2, p, dof, ex = chi2_contingency(chi_arr)
+
     ethnic_group_data = [
+    [f'N = {len(v_ethnic)}', f'N = {len(o_ethnic)}', f'N = {len(p_ethnic)}', 'chi-square'],
     [f'{v_counts[1]} ({v_counts[1]*100  / v_ethnic.size:.1f}%)',
     f'{o_counts[1]} ({o_counts[1]*100  / o_ethnic.size:.1f}%)',
-    f'{p_counts[1]} ({p_counts[1]*100  / p_ethnic.size:.1f}%)'],
+    f'{p_counts[1]} ({p_counts[1]*100  / p_ethnic.size:.1f}%)',
+    f'p = {p:.4f}'],
 
-    [f'{v_counts[0]} ({v_counts[0]*100  / v_ethnic.size:.1f}%)',
-    f'{o_counts[0]} ({o_counts[0]*100  / o_ethnic.size:.1f}%)',
-    f'{p_counts[0]} ({p_counts[0]*100  / p_ethnic.size:.1f}%)'],
+    [f'{v_counts[2]} ({v_counts[2]*100  / v_ethnic.size:.1f}%)',
+    f'{o_counts[2]} ({o_counts[2]*100  / o_ethnic.size:.1f}%)',
+    f'{p_counts[2]} ({p_counts[2]*100  / p_ethnic.size:.1f}%)'],
 
     [f'{v_counts[0] + v_counts[3] + v_counts[4]} ({(v_counts[0] + v_counts[3] + v_counts[4])*100  / v_ethnic.size:.1f}%)',
     f'{o_counts[0] + o_counts[3] + o_counts[4]} ({(o_counts[0] + o_counts[3] + o_counts[4])*100  / o_ethnic.size:.1f}%)',
@@ -1304,36 +1405,10 @@ def demographics_table(virtual, office, phone, config):
     p_race = np.array(phone.races)
 
     v_unique, v_counts = np.unique(v_race, return_counts=True)
-    v_unique = np.insert(v_unique, 4, 'Native Hawaiian')
-    v_counts = np.insert(v_counts, 4, 0)
     o_unique, o_counts = np.unique(o_race, return_counts=True)
     p_unique, p_counts = np.unique(o_race, return_counts=True)
-
-    race_data = [
-    [f'{v_counts[7]} ({v_counts[7]*100  / v_race.size:.1f}%)',
-    f'{o_counts[7]} ({o_counts[7]*100  / o_race.size:.1f}%)',
-    f'{p_counts[7]} ({p_counts[7]*100  / p_race.size:.1f}%)'],
-
-    [f'{v_counts[2]} ({v_counts[2]*100  / v_race.size:.1f}%)',
-    f'{o_counts[2]} ({o_counts[2]*100  / o_race.size:.1f}%)',
-    f'{p_counts[2]} ({p_counts[2]*100  / p_race.size:.1f}%)'],
-
-    [f'{v_counts[1]} ({v_counts[1]*100  / v_race.size:.1f}%)',
-    f'{o_counts[1]} ({o_counts[1]*100  / o_race.size:.1f}%)',
-    f'{p_counts[1]} ({p_counts[1]*100  / p_race.size:.1f}%)'],
-
-    [f'{(v_counts[5] + v_counts[4])} ({(v_counts[5] + v_counts[4])*100  / v_race.size:.1f}%)',
-    f'{(o_counts[5] + o_counts[4])} ({(o_counts[5] + o_counts[4])*100  / o_race.size:.1f}%)',
-    f'{(p_counts[5] + p_counts[4])} ({(p_counts[5] + p_counts[4])*100  / p_race.size:.1f}%)'],
-
-    [f'{v_counts[0]} ({v_counts[0]*100  / v_race.size:.1f}%)',
-    f'{o_counts[0]} ({o_counts[0]*100  / o_race.size:.1f}%)',
-    f'{p_counts[0]} ({p_counts[0]*100  / p_race.size:.1f}%)'],
-
-    [f'{(v_counts[3] + v_counts[6])} ({(v_counts[3] + v_counts[6])*100  / v_race.size:.1f}%)',
-    f'{(o_counts[3] + o_counts[6])} ({(o_counts[3] + o_counts[6])*100  / o_race.size:.1f}%)',
-    f'{(p_counts[3] + p_counts[6])} ({(p_counts[3] + p_counts[6])*100  / p_race.size:.1f}%)']
-    ]
+    chi2, p, dof, ex = chi2_contingency(np.vstack((o_counts, v_counts)))
+    race_data = format_percentage_row(v_counts, o_counts, p_counts, p_val=p, p_type='chi-square')
 
     # 'Language', 'English', 'Spanish', 'Other', 'Unknown'
     v_lang = np.array(virtual.languages)
@@ -1344,30 +1419,15 @@ def demographics_table(virtual, office, phone, config):
     o_unique, o_counts = np.unique(o_lang, return_counts=True)
     p_unique, p_counts = np.unique(p_lang, return_counts=True)
 
-    language_data = [
-    [f'{v_counts[0]} ({v_counts[0]*100  / v_lang.size:.1f}%)',
-    f'{o_counts[0]} ({o_counts[0]*100  / o_lang.size:.1f}%)',
-    f'{p_counts[0]} ({p_counts[0]*100  / p_lang.size:.1f}%)'],
+    chi2, p, dof, ex = chi2_contingency(np.vstack((o_counts, v_counts)))
+    language_data = format_percentage_row(np.roll(v_counts, -1), np.roll(o_counts, -1), np.roll(p_counts, -1), p_val=p, p_type='chi-square')
 
-    [f'{v_counts[2]} ({v_counts[2]*100  / v_lang.size:.1f}%)',
-    f'{o_counts[2]} ({o_counts[2]*100  / o_lang.size:.1f}%)',
-    f'{p_counts[1]} ({p_counts[1]*100  / p_lang.size:.1f}%)'],
-
-    [f'{v_counts[1]} ({v_counts[1]*100  / v_lang.size:.1f}%)',
-    f'{o_counts[1]} ({o_counts[1]*100  / o_lang.size:.1f}%)',
-    f'0 (0%)'],
-
-    [f'{v_counts[3]} ({v_counts[3]*100  / v_lang.size:.1f}%)',
-    f'{o_counts[3]} ({o_counts[3]*100  / o_lang.size:.1f}%)',
-    f'{p_counts[2]} ({p_counts[2]*100  / p_lang.size:.1f}%)']
-    ]
-
-    body = empty_row + age_data + empty_row
-    body += empty_row + legal_sex_data + empty_row
-    body += empty_row + marital_status_data+ empty_row
-    body += empty_row + ethnic_group_data + empty_row
-    body += empty_row + race_data + empty_row
-    body += empty_row + language_data
+    body = age_data + empty_row
+    body += legal_sex_data + empty_row
+    body += marital_status_data+ empty_row
+    body += ethnic_group_data + empty_row
+    body += race_data + empty_row
+    body += language_data
 
     write_output_csv(body, rows, header, title='demographics_table')
     return
@@ -1422,11 +1482,82 @@ def sort_patients(patients, config):
 
     return virtual, office, phone, no_new
 
+def timing_comparison_table(virtual, office):
+    columns = ['virtual', 'office', 'anova']
+    empty_row = ['', '']
+
+    virt = np.array(virtual.first_visit_to_first_procedure_days)
+    offi = np.array(office.first_visit_to_first_procedure_days)
+    anova, p2 = f_oneway(virt, offi)
+    visit_to_procedure = [
+    [f'N = {virt.size}', f'N = {offi.size}', ''],
+    [f'{virt.mean():.1f} ({virt.std():.1f})', f'{offi.mean():.1f} ({offi.std():.1f})', f'p = {p2:.3f}'],
+    [f'{np.median(virt)} ({np.percentile(virt, 25)}–{np.percentile(virt, 75)})', f'{np.median(offi)} ({np.percentile(offi, 25)}–{np.percentile(offi, 75)})'],
+    [f'{virt.min()}–{virt.max()}', f'{offi.min()}–{offi.max()}']
+    ]
+
+    virt = np.array(virtual.scheduling_to_first_visit_days)
+    offi = np.array(office.scheduling_to_first_visit_days)
+    anova, p2 = f_oneway(virt, offi)
+    sched_to_visit = [
+    [f'N = {virt.size}', f'N = {offi.size}', ''],
+    [f'{virt.mean():.1f} ({virt.std():.1f})', f'{offi.mean():.1f} ({offi.std():.1f})', f'p = {p2:.3f}'],
+    [f'{np.median(virt)} ({np.percentile(virt, 25)}–{np.percentile(virt, 75)})', f'{np.median(offi)} ({np.percentile(offi, 25)}–{np.percentile(offi, 75)})'],
+    [f'{virt.min()}–{virt.max()}', f'{offi.min()}–{offi.max()}']
+    ]
+
+    virt = np.array(virtual.scheduling_to_first_procedure_days)
+    offi = np.array(office.scheduling_to_first_procedure_days)
+    anova, p2 = f_oneway(virt, offi)
+    sched_to_procedure = [
+    [f'N = {virt.size}', f'N = {offi.size}', ''],
+    [f'{virt.mean():.1f} ({virt.std():.1f})', f'{offi.mean():.1f} ({offi.std():.1f})', f'p = {p2:.3f}'],
+    [f'{np.median(virt)} ({np.percentile(virt, 25)}–{np.percentile(virt, 75)})', f'{np.median(offi)} ({np.percentile(offi, 25)}–{np.percentile(offi, 75)})'],
+    [f'{virt.min()}–{virt.max()}', f'{offi.min()}–{offi.max()}']
+    ]
+
+    virt = np.array(virtual.referral_to_first_procedure_days)
+    offi = np.array(office.referral_to_first_procedure_days)
+    anova, p2 = f_oneway(virt, offi)
+    ref_to_procedure = [
+    [f'N = {virt.size}', f'N = {offi.size}', ''],
+    [f'{virt.mean():.1f} ({virt.std():.1f})', f'{offi.mean():.1f} ({offi.std():.1f})', f'p = {p2:.3f}'],
+    [f'{np.median(virt)} ({np.percentile(virt, 25)}–{np.percentile(virt, 75)})', f'{np.median(offi)} ({np.percentile(offi, 25)}–{np.percentile(offi, 75)})'],
+    [f'{virt.min()}–{virt.max()}', f'{offi.min()}–{offi.max()}']
+    ]
+
+    virt = np.array(virtual.referral_to_first_visit_days)
+    offi = np.array(office.referral_to_first_visit_days)
+    anova, p2 = f_oneway(virt, offi)
+    ref_to_visit = [
+    [f'N = {virt.size}', f'N = {offi.size}', ''],
+    [f'{virt.mean():.1f} ({virt.std():.1f})', f'{offi.mean():.1f} ({offi.std():.1f})', f'p = {p2:.3f}'],
+    [f'{np.median(virt)} ({np.percentile(virt, 25)}–{np.percentile(virt, 75)})', f'{np.median(offi)} ({np.percentile(offi, 25)}–{np.percentile(offi, 75)})'],
+    [f'{virt.min()}–{virt.max()}', f'{offi.min()}–{offi.max()}']
+    ]
+
+    rows = [
+    'Scheduling to first visit', 'Mean (std)', 'Median (IQR)', 'Range', '',
+    'Scheduling to first procedure', 'Mean (std)', 'Median (IQR)', 'Range', '',
+    'Referral to first visit', 'Mean (std)', 'Median (IQR)', 'Range', '',
+    'Referral to first procedure', 'Mean (std)', 'Median (IQR)', 'Range', '',
+    'First visit to first procedure', 'Mean (std)', 'Median (IQR)', 'Range'
+    ]
+
+    body = sched_to_visit + [empty_row]
+    body += sched_to_procedure + [empty_row]
+    body += ref_to_visit + [empty_row]
+    body += ref_to_procedure + [empty_row]
+    body += visit_to_procedure
+
+    write_output_csv(body, rows, columns, title='timing_comparison')
+    return
+
 def compare_groups(virtual, office, phone):
     fig, axs = plt.subplots(3,2, tight_layout=True)
     # fig, axs = plt.subplots(1,1, tight_layout=True)
     labels = ['virtual', 'office', 'phone']
-
+    timing_comparison_table(virtual, office)
     # Number of days from referral to first completed visit
     draw_hist(axs[0,0],
         virtual.first_visit_to_first_procedure_days,
@@ -1454,16 +1585,7 @@ def compare_groups(virtual, office, phone):
         phone.scheduling_to_first_procedure_days,
         labels, 200,'Scheduling to first procedure', 'Days')
     axs[0,1].legend(loc='upper right')
-    
 
-    # axs[2,1].table(cellText=cellText, rowLabels=rows, colLabels=columns, loc='center')
-    # axs[2,1].axis('off')
-    # axs.table(cellText=cellText, rowLabels=rows, colLabels=columns, loc='center')
-    # axs.axis('off')
-
-    # self.language_portions
-    # self.marital_portions
-    # self.race_portions
     lang_labels = ['English', 'Spanish', 'Other']
     marital_labels = ['Single', 'Married', 'Other']
     legal_sex_labels = ['Male', 'Female']
@@ -1484,15 +1606,29 @@ def add_categories_to_list(rows, name, cat_list, suffix = ''):
 def bad_divide(x,y):
     return x/y if y else 0
 
-def summary_table(virtual, office, phone, config):
+def format_dx_cat_rows(vals, config, p_val = None, p_type = None):
+    virtual, office, phone = vals
+    return_list = []
+    for i, dx_cat in enumerate(config.dx_category_list):
+        new_row = [
+        virtual[dx_cat]['count'],
+        office[dx_cat]['count'],
+        phone[dx_cat]['count']
+        ]
+        if i == 0:
+            new_row.append(f'{p_type}')
+        elif i == 1:
+            new_row.append(f'p  = {p_val:.4f}')
+        return_list.append(new_row)
+    return return_list
+
+def dx_category_table(virtual, office, phone, config):
     plt.clf()
     fig, axs = plt.subplots(1,1, tight_layout=True)
-    labels = [f'virtual (N={virtual.pt_count})', f'office (N={office.pt_count})', f'phone (N={phone.pt_count})']
+    labels = [f'virtual (N={virtual.pt_count})', f'office (N={office.pt_count})', f'phone (N={phone.pt_count})', 'p-value']
     columns = labels
-    empty_row = ['', '', '']
+    empty_row = ['', '', '', '']
     rows = []
-    # rows = add_categories_to_list(rows, 'Pts with cancelled procedure (% of total)', config.dx_category_list, suffix='(% of category)')
-    # rows = add_categories_to_list(rows, 'Pts with procedure (% of total)', config.dx_category_list, suffix='(% of category)')
     
     rows = add_categories_to_list(rows, 'Pts w/cancelled office procedure', config.dx_category_list)
     rows = add_categories_to_list(rows, 'Pts w/office procedure', config.dx_category_list)
@@ -1510,66 +1646,38 @@ def summary_table(virtual, office, phone, config):
     'Totals'
     ]
     for dx_cat in config.dx_category_list:
-        # rows.append(dx_cat + ' (% of column)')
         rows.append(dx_cat)
 
 
     cellText = []
-    
-    # cancelled_procedures = [
-    # np.count_nonzero(virtual.cancelled_procedures) / len(virtual.cancelled_procedures),
-    # np.count_nonzero(office.cancelled_procedures) / len(office.cancelled_procedures),
-    # np.count_nonzero(phone.cancelled_procedures) / len(phone.cancelled_procedures)
-    # ]
-    # cancelled_procedures = [f'{i*100:.1f}%' for i in cancelled_procedures]
 
     cancelled_procedures = [
     virtual.patients_with_canceled_procedure,
     office.patients_with_canceled_procedure,
     phone.patients_with_canceled_procedure,
     ]
-    
-    cancelled_cat_list = []
-    for dx_cat in config.dx_category_list:
-        # new_row = [
-        # bad_divide(virtual.canceled_procedures_by_cat[dx_cat]['count'], virtual.diagnosis_cats[dx_cat]),
-        # bad_divide(office.canceled_procedures_by_cat[dx_cat]['count'], office.diagnosis_cats[dx_cat]),
-        # bad_divide(phone.canceled_procedures_by_cat[dx_cat]['count'], phone.diagnosis_cats[dx_cat])
-        # ]
-        # new_row = [f'{i*100:.1f}%' for i in new_row]
-        new_row = [
-        virtual.canceled_procedures_by_cat[dx_cat]['count'],
-        office.canceled_procedures_by_cat[dx_cat]['count'],
-        phone.canceled_procedures_by_cat[dx_cat]['count']
-        ]
-        cancelled_cat_list.append(new_row)
 
-    # patients_with_procedure =[
-    # virtual.patients_with_completed_procedure / virtual.pt_count,
-    # office.patients_with_completed_procedure / office.pt_count,
-    # phone.patients_with_completed_procedure / phone.pt_count,
-    # ]
-    # patients_with_procedure = [f'{i*100:.1f}%' for i in patients_with_procedure]
+    contingency_table = [
+    [virtual.patients_with_canceled_procedure, office.patients_with_canceled_procedure],
+    [virtual.total_procedures - virtual.patients_with_canceled_procedure, office.total_procedures - office.patients_with_canceled_procedure]
+    ]
+    chi2, p, dof, ex = chi2_contingency(contingency_table)
+
+    vals = (virtual.canceled_procedures_by_cat, office.canceled_procedures_by_cat, phone.canceled_procedures_by_cat)
+
+    cancelled_cat_list = format_dx_cat_rows(vals, config, p_val=p, p_type='chi-square')
+
     patients_with_procedure =[
     virtual.patients_with_completed_procedure,
     office.patients_with_completed_procedure,
     phone.patients_with_completed_procedure
     ]
 
-    procedure_cat_list = []
-    for dx_cat in config.dx_category_list:
-        # new_row = [
-        # bad_divide(virtual.completed_procedures_by_cat[dx_cat]['count'], virtual.diagnosis_cats[dx_cat]),
-        # bad_divide(office.completed_procedures_by_cat[dx_cat]['count'], office.diagnosis_cats[dx_cat]),
-        # bad_divide(phone.completed_procedures_by_cat[dx_cat]['count'], phone.diagnosis_cats[dx_cat])
-        # ]
-        # new_row = [f'{i*100:.1f}%' for i in new_row]
-        new_row = [
-        virtual.completed_procedures_by_cat[dx_cat]['count'],
-        office.completed_procedures_by_cat[dx_cat]['count'],
-        phone.completed_procedures_by_cat[dx_cat]['count']
-        ]
-        procedure_cat_list.append(new_row)
+    contingency_table = [[virtual.patients_with_completed_procedure, office.patients_with_completed_procedure],
+    [virtual.pt_count - virtual.patients_with_completed_procedure, office.pt_count - office.patients_with_completed_procedure]]
+    chi2, p, dof, ex = chi2_contingency(contingency_table)
+    vals = (virtual.completed_procedures_by_cat, office.completed_procedures_by_cat, phone.completed_procedures_by_cat)
+    procedure_cat_list = format_dx_cat_rows(vals, config, p_val=p, p_type='chi-square')
 
     patients_with_surgery = [
     virtual.pt_with_surgery,
@@ -1577,20 +1685,11 @@ def summary_table(virtual, office, phone, config):
     phone.pt_with_surgery
     ]
 
-    surgery_cat_list = []
-    for dx_cat in config.dx_category_list:
-        new_row = [
-        virtual.surgeries_by_cat[dx_cat]['total'],
-        office.surgeries_by_cat[dx_cat]['total'],
-        phone.surgeries_by_cat[dx_cat]['total']
-        ]
-        surgery_cat_list.append(new_row)
-    # patients_with_cancelled_appts = [
-    # np.count_nonzero(virtual.cancelled_appointments) / len(virtual.cancelled_appointments),
-    # np.count_nonzero(office.cancelled_appointments) / len(office.cancelled_appointments),
-    # np.count_nonzero(phone.cancelled_appointments) / len(phone.cancelled_appointments)
-    # ]
-    # patients_with_cancelled_appts = [f'{i*100:.2f}%' for i in patients_with_cancelled_appts]
+    contingency_table = [[virtual.pt_with_surgery, office.pt_with_surgery],
+    [virtual.pt_count - virtual.pt_with_surgery, office.pt_count - office.pt_with_surgery]]
+    chi2, p, dof, ex = chi2_contingency(contingency_table)
+    vals = (virtual.surgeries_by_cat, office.surgeries_by_cat, phone.surgeries_by_cat)
+    surgery_cat_list = format_dx_cat_rows(vals, config, p_val=p, p_type='chi-square')
 
     patients_with_cancelled_appts = [
     np.count_nonzero(virtual.cancelled_appointments),
@@ -1602,8 +1701,6 @@ def summary_table(virtual, office, phone, config):
     b = np.array(office.visits_until_first_procedure_count)
     c = np.array(phone.visits_until_first_procedure_count)
 
-    # pdb.set_trace()
-
     visits_until_first_procedure = [
     a[np.nonzero(a)].mean(),
     b[np.nonzero(b)].mean(),
@@ -1611,15 +1708,6 @@ def summary_table(virtual, office, phone, config):
     ]
 
     visits_until_first_procedure = [f'{i:.2f}' for i in visits_until_first_procedure]
-
-    # conversions_to_in_person = [
-    # virtual.conversions_to_in_person / virtual.pt_count,
-    # office.conversions_to_in_person / office.pt_count,
-    # phone.conversions_to_in_person / phone.pt_count
-    # ]
-
-    # conversions_to_in_person = [f'{i*100:.2f}%' for i in conversions_to_in_person]
-    # conversions_to_in_person[1] = '-'
     
     conversions_to_in_person = [
         virtual.conversions_to_in_person,
@@ -1677,14 +1765,14 @@ def summary_table(virtual, office, phone, config):
 
     for dx_cat in config.dx_category_list:
         cellText.append([
-            # f'{virtual.diagnosis_cats[dx_cat] / virtual.pt_count*100:.1f}%',
-            # f'{office.diagnosis_cats[dx_cat] / office.pt_count*100:.1f}%',
-            # f'{phone.diagnosis_cats[dx_cat] / phone.pt_count*100:.1f}%'
             f'{virtual.diagnosis_cats[dx_cat]}',
             f'{office.diagnosis_cats[dx_cat]}',
             f'{phone.diagnosis_cats[dx_cat]}'
             ])
-    
+    for cell in cellText:
+        while(len(cell) < 4):
+            cell.append('')
+
     table = axs.table(cellText=cellText, rowLabels=rows, colLabels=columns, loc='center')
     write_output_csv(cellText, rows, columns)
     
@@ -1692,6 +1780,71 @@ def summary_table(virtual, office, phone, config):
     table.set_fontsize(9)
     axs.axis('off')
     # plt.show()
+
+def set_box_color(bp, color):
+    plt.setp(bp['boxes'], color=color)
+    plt.setp(bp['whiskers'], color=color)
+    plt.setp(bp['caps'], color=color)
+    plt.setp(bp['medians'], color=color)
+
+def percentage_with_zero(numerator, denominator):
+    if denominator == 0:
+        return 0
+    else:
+        return (numerator / denominator) * 100
+
+def category_histograms(virtual, office, config):
+    os.makedirs(config.figures_dir, exist_ok=True)
+    plt.close('all')
+    width = 0.2
+    x = np.arange(3)
+    labels = ['virtual', 'office']
+    bar_labels = ['Percent of\ntotal patients', 'Percent of category\npatients with procedure', 'Percent of category\npatients with surgery']
+    box_labels = ['Visit to procedure', 'Scheduling to visit', 'Scheduling to procedure']
+    for i, dx_cat in enumerate(config.dx_category_list):
+        plt.clf()
+        fig, axs = plt.subplots(1,2, tight_layout=True, figsize=(12, 4))
+        fig.suptitle(f'{dx_cat} Patients')
+        ax = axs[0]
+        ax.set_ylim(bottom=0, top=100)
+        ax.set_ylabel('Percentage')
+        virtual.completed_procedures_by_cat[dx_cat]
+        virtual_heights = [percentage_with_zero(virtual.diagnosis_cats[dx_cat], virtual.pt_count),
+        percentage_with_zero(virtual.completed_procedures_by_cat[dx_cat]['count'], virtual.diagnosis_cats[dx_cat]),
+        percentage_with_zero(virtual.surgeries_by_cat[dx_cat]['count'], virtual.diagnosis_cats[dx_cat])]
+
+        office_heights = [percentage_with_zero(office.diagnosis_cats[dx_cat], office.pt_count),
+        percentage_with_zero(office.completed_procedures_by_cat[dx_cat]['count'], office.diagnosis_cats[dx_cat]),
+        percentage_with_zero(office.surgeries_by_cat[dx_cat]['count'], office.diagnosis_cats[dx_cat])]
+
+        ax.bar(x-width/2, virtual_heights, width, label=labels[0], color='#2C7BB6')
+        ax.bar(x+width/2, office_heights, width, label=labels[1], color='#D7191C')
+        ax.legend(loc='upper right')
+        ax.set_xticks(range(3))
+        ax.set_xticklabels(bar_labels)
+
+        ax = axs[1]
+        virtual_arrs = [virtual.first_visit_to_first_procedure_dxcat[dx_cat]['arr'],
+        virtual.scheduling_to_first_visit_dxcat[dx_cat]['arr'],
+        virtual.scheduling_to_first_procedure_dxcat[dx_cat]['arr']]
+
+        office_arrs = [office.first_visit_to_first_procedure_dxcat[dx_cat]['arr'],
+        office.scheduling_to_first_visit_dxcat[dx_cat]['arr'],
+        office.scheduling_to_first_procedure_dxcat[dx_cat]['arr']]
+
+        bpl = ax.boxplot(virtual_arrs, positions=np.array(range(len(virtual_arrs)))*2.0-0.4, sym='', widths=0.6)
+        bpr = ax.boxplot(office_arrs, positions=np.array(range(len(office_arrs)))*2.0+0.4, sym='', widths=0.6)
+
+        ax.set_xticks(range(0,6,2))
+        ax.set_xticklabels(box_labels)
+        ax.set_ylabel('days')
+        
+        set_box_color(bpl, '#2C7BB6') # colors are from http://colorbrewer2.org/
+        set_box_color(bpr, '#D7191C')
+        fig_path = os.path.join(config.figures_dir, f'{dx_cat}summary.png')
+        plt.savefig(fig_path)
+        plt.close()
+    return
 
 def write_output_csv(body, rows, columns, title='output'):
     x = PrettyTable()
@@ -1704,6 +1857,8 @@ def write_output_csv(body, rows, columns, title='output'):
         try:
             for k, row in enumerate(rows):
                 w = [row] + body[k]
+                while(len(w) < len(header)):
+                    w.append('')
                 x.add_row(w)
                 writer.writerow(w)
         except:
@@ -1755,8 +1910,22 @@ def draw_barchart_two(ax, g1, g2, g3, xlabels, labels, title):
     ax.set_title(title)
 
 def grouped_barchart(ax, g1, g2, xlabels, labels, title):
-
+    # self.completed_procedures_by_cat = {}
+    # self.canceled_procedures_by_cat = {}
+    # self.surgeries_by_cat = {}
     return
+
+def helper_summaries(virtual, office, phone, config):
+    os.makedirs(config.helper_dir, exist_ok=True)
+    with open("helpers/zero_day_helper.csv", 'w') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['mrn', 'name', 'pt_type', 'visit_type', 'earliest_referral_date', 'earliest_scheduling_date' ,'earliest_appt_date'])
+        for mrn in virtual.sched_to_visit_zero_days:
+            pt = virtual.pt_dict[mrn]
+            writer.writerow([pt.mrn, pt.pt_name, 'virtual', pt.earliest_completed_type, pt.earliest_referral_date, pt.earliest_scheduling_date, pt.earliest_completed_date])
+        for mrn in office.sched_to_visit_zero_days:
+            pt = office.pt_dict[mrn]
+            writer.writerow([pt.mrn, pt.pt_name, 'office', pt.earliest_completed_type, pt.earliest_referral_date, pt.earliest_scheduling_date, pt.earliest_completed_date])
 
 def need_more_info(patients, config):
     max_prov = 0
@@ -1841,11 +2010,13 @@ def main(args):
         # with open('data/sorted_patients.pickle', 'wb') as f:
         #     print('Pickling sorted data...')
         #     pickle.dump(sorted_patients, f, pickle.HIGHEST_PROTOCOL)
-    need_more_info(patients, config)
-    virtual_cancellations(virtual, config)
+    # need_more_info(patients, config)
+    # virtual_cancellations(virtual, config)
+    helper_summaries(virtual, office, phone, config)
     compare_groups(virtual, office, phone)
-    summary_table(virtual, office, phone, config)
+    dx_category_table(virtual, office, phone, config)
     demographics_table(virtual, office, phone, config)
+    category_histograms(virtual, office, config)
 
     if args.o:
         print('Summarizing data...')

@@ -1,1 +1,5 @@
 data
+figures
+*.png
+*.xlsx
+*.csv
