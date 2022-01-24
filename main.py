@@ -760,7 +760,7 @@ class PtClass(object):
                 # self.marital_status.append(pt.marital_status)
                 self.legal_sex.append(pt.legal_sex)
                 self.legal_sex_count += 1
-                self.ethnic_group.append(pt.ethnic_group)
+                self.ethnic_group.append(self.sort_ethnic_group(pt))
                 if str(pt.zipcode) in self.config.zip_incomes:
                     self.zip_incomes.append(self.config.zip_incomes[str(pt.zipcode)])
                 
@@ -773,7 +773,7 @@ class PtClass(object):
                 self.legal_sex_count += 1
                 self.raw_marital_status.append('Unknown')
                 self.marital_status.append('Unknown')
-                self.ethnic_group.append('Unknown')
+                self.ethnic_group.append('Declined / Unknown')
                 self.languages.append('Declined / Unknown')
                 self.races.append('Declined / Unknown')
                 self.age_unknown += 1
@@ -882,6 +882,17 @@ class PtClass(object):
         
         return pt.marital_status
 
+    def sort_ethnic_group(self, pt):
+        if pt.ethnic_group is float:
+            pt.ethnic_group = 'Declined / Unknown'
+        elif pt.ethnic_group == 'Hispanic':
+            pass
+        elif pt.ethnic_group == 'Non-Hispanic':
+            pass
+        else:
+            pt.ethnic_group = 'Declined / Unknown'
+
+        return pt.ethnic_group
 
     def calculate_distances(self, pt):
         if str(pt.zipcode) in self.zip_df['zipcode'].values:
@@ -1287,7 +1298,11 @@ def link_demographics(patients, df, config):
         patients[mrn] = pt
     # return patients
 
-def format_percentage_row(v_arr, o_arr, p_arr, p_val = None, p_type = None):
+def format_percentage_row(v_arr, o_arr, p_arr, p_val = None, p_type = None, roll = 0):
+    if roll:
+        v_arr = np.roll(v_arr, roll)
+        o_arr = np.roll(o_arr, roll)
+        p_arr = np.roll(p_arr, roll)
     counts = [v_arr, o_arr, p_arr]
     
     title_row = []
@@ -1308,6 +1323,8 @@ def format_percentage_row(v_arr, o_arr, p_arr, p_val = None, p_type = None):
     return row_data
 
 def demographics_table(virtual, office, phone, config):
+    plt.close('all')
+    fig, axs = plt.subplots(3,2, tight_layout=True, figsize=(8, 12))
     header = [f'virtual (N={virtual.pt_count})', f'office (N={office.pt_count})', f'phone (N={phone.pt_count})', 'p-value']
     empty_row = [['', '', '', '']]
     rows = ['Age', 'Mean (SD)', 'Median (IQR)', 'Range', 'Unknown', '',
@@ -1317,6 +1334,11 @@ def demographics_table(virtual, office, phone, config):
     'Race, n (%)', 'American Indian/Alaska Native', 'Asian / Pacific Islander', 'Black', 'Declined / Unknown', 'Multiracial', 'Non-white Hispanic', 'White', 'White Hispanic', '',
     'Language, n (%)', 'English', 'Interpreter Needed', 'Declined / Unknown'
     ]
+
+    v_color = '#2C7BB6'
+    o_color = '#D7191C'
+    xlabels = ['virtual', 'office']
+    labels = ['virtual', 'office']
 
     # 'Age', 'Mean (SD)', 'Median (IQR)', 'Range',
     v_age = np.array(virtual.ages)
@@ -1330,6 +1352,15 @@ def demographics_table(virtual, office, phone, config):
     [f'{v_age.min()}–{v_age.max()}', f'{o_age.min()}–{o_age.max()}', f'{p_age.min()}–{p_age.max()}'],
     [virtual.age_unknown, office.age_unknown, phone.age_unknown]
     ]
+    ax = axs[0][0]
+    bpl = ax.boxplot(v_age, positions=[0.25])
+    bpr = ax.boxplot(o_age, positions = [0.75])
+    set_box_color(bpl, v_color) # colors are from http://colorbrewer2.org/
+    set_box_color(bpr, o_color)
+    ax.set_ylabel('Years')
+    ax.set_title('Age')
+    ax.set_xticks([0.25, 0.75])
+    ax.set_xticklabels(['virtual', 'office'])
 
     v_sex = np.array(virtual.legal_sex)
     o_sex = np.array(office.legal_sex)
@@ -1358,6 +1389,16 @@ def demographics_table(virtual, office, phone, config):
     f'{p_counts[2]} ({p_counts[2]*100  / p_sex.size:.1f}%)']
     ]
 
+    ax = axs[0][1]
+    virtuals = [v_counts[1]*100  / v_sex.size, v_counts[0]*100  / v_sex.size, v_counts[2]*100  / v_sex.size]
+    offices = [o_counts[1]*100  / o_sex.size, o_counts[0]*100  / o_sex.size, o_counts[2]*100  / o_sex.size]
+    labels = ['Male', 'Female', 'Declined / Unknown']
+    draw_barchart_three(ax, virtuals, offices, xlabels, labels, 'Legal Sex')
+    ax.legend(loc='upper right')
+    ax.set_ylabel('Percentage')
+    ax.set_ylim(bottom=0, top=100)
+
+    # Single, Married, Other LTR
     v_marital = np.array(virtual.marital_status)
     o_marital = np.array(office.marital_status)
     p_marital = np.array(phone.marital_status)
@@ -1368,7 +1409,14 @@ def demographics_table(virtual, office, phone, config):
     
     chi2, p, dof, ex = chi2_contingency(np.vstack((o_counts, v_counts)))
     marital_status_data = format_percentage_row(v_counts, o_counts, p_counts, p_val=p, p_type='chi-square')
-
+    ax = axs[1][0]
+    labels = ['Married', 'Single', 'Unmarried LTR']
+    virtuals = [v_counts[0]*100  / v_marital.size, v_counts[1]*100  / v_marital.size, v_counts[2]*100  / v_marital.size]
+    offices = [o_counts[0]*100  / o_marital.size, o_counts[1]*100  / o_marital.size, o_counts[2]*100  / o_marital.size]
+    draw_barchart_three(ax, virtuals, offices, xlabels, labels, 'Marital Status')
+    ax.legend(loc='upper right')
+    ax.set_ylabel('Percentage')
+    ax.set_ylim(bottom=0, top=100)
 
     # 'Ethnic Group', 'Hispanic', 'Non-hispanic', 'Declined / Unknown',
     v_ethnic = np.array(virtual.ethnic_group)
@@ -1379,26 +1427,34 @@ def demographics_table(virtual, office, phone, config):
     o_unique, o_counts = np.unique(o_ethnic, return_counts=True)
     p_unique, p_counts = np.unique(p_ethnic, return_counts=True)
 
-    chi_arr = np.array([[v_counts[0] + v_counts[3] + v_counts[4], v_counts[1], v_counts[2]],
-        [o_counts[0] + o_counts[3] + o_counts[4], o_counts[1], o_counts[2]]])
-    chi2, p, dof, ex = chi2_contingency(chi_arr)
+    chi2, p, dof, ex = chi2_contingency(np.vstack((o_counts, v_counts)))
+    # ethnic_group_data = [
+    # [f'N = {len(v_ethnic)}', f'N = {len(o_ethnic)}', f'N = {len(p_ethnic)}', 'chi-square'],
+    # [f'{v_counts[1]} ({v_counts[1]*100  / v_ethnic.size:.1f}%)',
+    # f'{o_counts[1]} ({o_counts[1]*100  / o_ethnic.size:.1f}%)',
+    # f'{p_counts[1]} ({p_counts[1]*100  / p_ethnic.size:.1f}%)',
+    # f'p = {p:.4f}'],
 
-    ethnic_group_data = [
-    [f'N = {len(v_ethnic)}', f'N = {len(o_ethnic)}', f'N = {len(p_ethnic)}', 'chi-square'],
-    [f'{v_counts[1]} ({v_counts[1]*100  / v_ethnic.size:.1f}%)',
-    f'{o_counts[1]} ({o_counts[1]*100  / o_ethnic.size:.1f}%)',
-    f'{p_counts[1]} ({p_counts[1]*100  / p_ethnic.size:.1f}%)',
-    f'p = {p:.4f}'],
+    # [f'{v_counts[2]} ({v_counts[2]*100  / v_ethnic.size:.1f}%)',
+    # f'{o_counts[2]} ({o_counts[2]*100  / o_ethnic.size:.1f}%)',
+    # f'{p_counts[2]} ({p_counts[2]*100  / p_ethnic.size:.1f}%)'],
 
-    [f'{v_counts[2]} ({v_counts[2]*100  / v_ethnic.size:.1f}%)',
-    f'{o_counts[2]} ({o_counts[2]*100  / o_ethnic.size:.1f}%)',
-    f'{p_counts[2]} ({p_counts[2]*100  / p_ethnic.size:.1f}%)'],
+    # [f'{v_counts[0] + v_counts[3] + v_counts[4]} ({(v_counts[0] + v_counts[3] + v_counts[4])*100  / v_ethnic.size:.1f}%)',
+    # f'{o_counts[0] + o_counts[3] + o_counts[4]} ({(o_counts[0] + o_counts[3] + o_counts[4])*100  / o_ethnic.size:.1f}%)',
+    # f'{p_counts[0] + p_counts[3] + p_counts[4]} ({(p_counts[0] + p_counts[3] + p_counts[4])*100  / p_ethnic.size:.1f}%)']
+    # ]
+    ethnic_group_data = format_percentage_row(v_counts, o_counts, p_counts, p_val=p, p_type='chi-square', roll=-1)
+    
+    ax = axs[1][1]
+    labels = ['Hispanic', 'Non-Hispanic', 'Declined / Unknown']
+    virtuals = [v_counts[1]*100  / v_ethnic.size, v_counts[2]*100  / v_ethnic.size, v_counts[0]*100  / v_ethnic.size]
+    offices = [o_counts[1]*100  / o_ethnic.size, o_counts[2]*100  / o_ethnic.size, o_counts[0]*100  / o_ethnic.size]
+    draw_barchart_three(ax, virtuals, offices, xlabels, labels, 'Ethnic Group')
+    ax.legend(loc='upper right')
+    ax.set_ylabel('Percentage')
+    ax.set_ylim(bottom=0, top=100)
 
-    [f'{v_counts[0] + v_counts[3] + v_counts[4]} ({(v_counts[0] + v_counts[3] + v_counts[4])*100  / v_ethnic.size:.1f}%)',
-    f'{o_counts[0] + o_counts[3] + o_counts[4]} ({(o_counts[0] + o_counts[3] + o_counts[4])*100  / o_ethnic.size:.1f}%)',
-    f'{p_counts[0] + p_counts[3] + p_counts[4]} ({(p_counts[0] + p_counts[3] + p_counts[4])*100  / p_ethnic.size:.1f}%)']
-    ]
-
+    ax = axs[2][0]
     # 'Race, n (%)', 'White', 'Black', 'Asian', 'Pacific Islander', 'Native American', 'Declined / Unknown'
     v_race = np.array(virtual.races)
     o_race = np.array(office.races)
@@ -1409,8 +1465,13 @@ def demographics_table(virtual, office, phone, config):
     p_unique, p_counts = np.unique(o_race, return_counts=True)
     chi2, p, dof, ex = chi2_contingency(np.vstack((o_counts, v_counts)))
     race_data = format_percentage_row(v_counts, o_counts, p_counts, p_val=p, p_type='chi-square')
+    labels = list(v_unique)
+    ax.set_title('Race')
+    ax.legend(loc='upper right')
+    ax.set_ylabel('Percentage')
+    ax.set_ylim(bottom=0, top=100)
 
-    # 'Language', 'English', 'Spanish', 'Other', 'Unknown'
+    # 'Language', 'English', 'Interpreter-needed, 'Unknown'
     v_lang = np.array(virtual.languages)
     o_lang = np.array(office.languages)
     p_lang = np.array(phone.languages)
@@ -1421,6 +1482,18 @@ def demographics_table(virtual, office, phone, config):
 
     chi2, p, dof, ex = chi2_contingency(np.vstack((o_counts, v_counts)))
     language_data = format_percentage_row(np.roll(v_counts, -1), np.roll(o_counts, -1), np.roll(p_counts, -1), p_val=p, p_type='chi-square')
+
+    ax = axs[2][1]
+    labels = ['English', 'Interpreter-needed', 'Declined / Unknown']
+    virtuals = [v_counts[1]*100  / v_lang.size, v_counts[2]*100  / v_lang.size, v_counts[0]*100  / v_lang.size]
+    offices = [o_counts[1]*100  / o_lang.size, o_counts[2]*100  / o_lang.size, o_counts[0]*100  / o_lang.size]
+    draw_barchart_three(ax, virtuals, offices, xlabels, labels, 'Language')
+    ax.legend(loc='upper right')
+    ax.set_ylabel('Percentage')
+    ax.set_ylim(bottom=0, top=100)
+    fig_path = os.path.join(config.figures_dir, 'demographics.png')
+    plt.savefig(fig_path)
+    plt.close()
 
     body = age_data + empty_row
     body += legal_sex_data + empty_row
@@ -1553,8 +1626,9 @@ def timing_comparison_table(virtual, office):
     write_output_csv(body, rows, columns, title='timing_comparison')
     return
 
-def compare_groups(virtual, office, phone):
-    fig, axs = plt.subplots(3,2, tight_layout=True)
+def compare_groups(virtual, office, phone, config):
+    plt.close('all')
+    fig, axs = plt.subplots(3,2, tight_layout=True, figsize=(8, 12))
     # fig, axs = plt.subplots(1,1, tight_layout=True)
     labels = ['virtual', 'office', 'phone']
     timing_comparison_table(virtual, office)
@@ -1564,21 +1638,21 @@ def compare_groups(virtual, office, phone):
         office.first_visit_to_first_procedure_days,
         phone.first_visit_to_first_procedure_days,
         labels, 100, 'First visit to first procedure', 'Days', bins=25)
-    # draw_hist(axs[0,1],
-    #     virtual.referral_to_first_procedure_days,
-    #     office.referral_to_first_procedure_days,
-    #     phone.referral_to_first_procedure_days,
-    #     labels, 200, 'Referral to first procedure', 'Days')
+    draw_hist(axs[0,1],
+        virtual.referral_to_first_procedure_days,
+        office.referral_to_first_procedure_days,
+        phone.referral_to_first_procedure_days,
+        labels, 200, 'Referral to first procedure', 'Days')
     draw_hist(axs[1,0],
         virtual.scheduling_to_first_visit_days,
         office.scheduling_to_first_visit_days,
         phone.scheduling_to_first_visit_days,
         labels, 110, 'Scheduling to first visit', 'Days')
-    # draw_hist(axs[1,1],
-    #     virtual.referral_to_first_visit_days,
-    #     office.referral_to_first_visit_days,
-    #     phone.referral_to_first_visit_days,
-    #     labels, 400,'Referral to first visit', 'Days')
+    draw_hist(axs[1,1],
+        virtual.referral_to_first_visit_days,
+        office.referral_to_first_visit_days,
+        phone.referral_to_first_visit_days,
+        labels, 400,'Referral to first visit', 'Days')
     draw_hist(axs[2,0],
         virtual.scheduling_to_first_procedure_days,
         office.scheduling_to_first_procedure_days,
@@ -1586,15 +1660,10 @@ def compare_groups(virtual, office, phone):
         labels, 200,'Scheduling to first procedure', 'Days')
     axs[0,1].legend(loc='upper right')
 
-    lang_labels = ['English', 'Spanish', 'Other']
-    marital_labels = ['Single', 'Married', 'Other']
-    legal_sex_labels = ['Male', 'Female']
-
-    draw_barchart_three(axs[2,1], virtual.language_portions, office.language_portions, phone.language_portions, labels, lang_labels, 'Language portions')
-    draw_barchart_three(axs[1,1], virtual.marital_portions, office.marital_portions, phone.marital_portions, labels, marital_labels, 'Marital Status Portions')
-
-    draw_barchart_two(axs[0,1], virtual.legal_sex_portions, office.legal_sex_portions, phone.legal_sex_portions, labels, legal_sex_labels, "Legal sex portions")
-    # plt.show()
+    # draw_barchart_two(axs[0,1], virtual.legal_sex_portions, office.legal_sex_portions, phone.legal_sex_portions, labels, legal_sex_labels, "Legal sex portions")
+    fig_path = os.path.join(config.figures_dir, 'timing.png')
+    plt.savefig(fig_path)
+    plt.close()
 
 def add_categories_to_list(rows, name, cat_list, suffix = ''):
     rows.append(name)
@@ -1625,6 +1694,7 @@ def format_dx_cat_rows(vals, config, p_val = None, p_type = None):
 def dx_category_table(virtual, office, phone, config):
     plt.clf()
     fig, axs = plt.subplots(1,1, tight_layout=True)
+    
     labels = [f'virtual (N={virtual.pt_count})', f'office (N={office.pt_count})', f'phone (N={phone.pt_count})', 'p-value']
     columns = labels
     empty_row = ['', '', '', '']
@@ -1779,7 +1849,52 @@ def dx_category_table(virtual, office, phone, config):
     table.auto_set_font_size(False)
     table.set_fontsize(9)
     axs.axis('off')
+    plt.close()
+    # % Pt w/procedure, %proc w/cancels, %pt w/surgery
+    fig, ax = plt.subplots()
+    v_vals = np.array([virtual.patients_with_completed_procedure / virtual.pt_count, virtual.patients_with_canceled_procedure / virtual.patients_with_completed_procedure, virtual.pt_with_surgery / virtual.pt_count])
+    v_vals = v_vals*100
+    o_vals = np.array([office.patients_with_completed_procedure / office.pt_count, office.patients_with_canceled_procedure / office.patients_with_completed_procedure, office.pt_with_surgery / office.pt_count])
+    o_vals = o_vals*100
+
+    width = 0.3
+    xlabels = ['Patients with\na procedure', 'Procedure patients\nwith a cancellation', 'Patients with\na surgery']
+    x = np.arange(len(xlabels))
+    ax.bar(x-width/2, v_vals, width, label='virtual')
+    ax.bar(x+width/2, o_vals, width, label='office')
+    ax.set_title('Procedures and Surgeries')
+    ax.set_ylabel('Percentage')
+    ax.set_ylim(bottom = 0, top = 50)
+    ax.set_xticks(range(3))
+    ax.set_xticklabels(xlabels)
+    ax.legend(loc='upper right')
+    p_vals = get_procs_p_vals(virtual, office)
+    bar_spots = []
+    for k in range(3):
+        bar_spots.append(k-width)
+        bar_spots.append(k+width)
+    set_significances(ax, bar_spots, v_vals, o_vals, p_vals)
+    fig_path = os.path.join(config.figures_dir, 'procedures.png')
+    plt.savefig(fig_path)
+    plt.close()
+
+    # def draw_barchart_two(ax, g1, g2, colors, xlabels, labels, title):
     # plt.show()
+
+def get_procs_p_vals(virtual, office):
+    obs = [virtual.patients_with_completed_procedure, office.patients_with_completed_procedure]
+    totals = [virtual.pt_count, office.pt_count]
+    p1 = histo_contingency(obs, totals, '')
+
+    obs = [virtual.patients_with_canceled_procedure, office.patients_with_canceled_procedure]
+    totals = [virtual.patients_with_completed_procedure, office.patients_with_completed_procedure]
+    p2 = histo_contingency(obs, totals, '')
+
+    obs = [virtual.pt_with_surgery, office.pt_with_surgery]
+    totals = [virtual.pt_count, office.pt_count]
+    p3 = histo_contingency(obs, totals, '')
+
+    return [p1, p2, p3]
 
 def set_box_color(bp, color):
     plt.setp(bp['boxes'], color=color)
@@ -1793,22 +1908,101 @@ def percentage_with_zero(numerator, denominator):
     else:
         return (numerator / denominator) * 100
 
+def label_diff(ax, i, j, text, X, Y, plot):
+    x = (X[i]+X[j])/2
+    if plot == 'histo':
+        y = 1.1*max(Y[i], Y[j]) + 3
+    elif plot == 'box':
+        y = 1.05*max(Y[i], Y[j])
+    dx = abs(X[i]-X[j])
+    props = {'arrowstyle':'-','linewidth':2} #,'shrinkA':20,'shrinkB':20,'linewidth':2}
+    ax.annotate('', xy=(X[i],y+8), zorder=10, ha='center')
+    ax.annotate('', xy=(X[i],y), xytext=(X[j],y), arrowprops=props)
+    ax.text(x, y+3, text, ha='center')
+
+def histo_contingency(obs, totals, dx_cat):
+    row1 = np.array(obs)
+    row2 = np.subtract(totals, obs)
+    contingency = np.vstack((row1, row2))
+    chi2, p, dof, ex = chi2_contingency(contingency)
+    return p
+
+def get_histo_p_vals(virtual, office, dx_cat):
+    obs = [virtual.diagnosis_cats[dx_cat], office.diagnosis_cats[dx_cat]]
+    totals = [virtual.pt_count, office.pt_count]
+    p1 = histo_contingency(obs, totals, dx_cat)
+
+    obs = [virtual.completed_procedures_by_cat[dx_cat]['count'], office.completed_procedures_by_cat[dx_cat]['count']]
+    totals = [virtual.diagnosis_cats[dx_cat], office.diagnosis_cats[dx_cat]]
+    p2 = histo_contingency(obs, totals, dx_cat)
+
+    obs = [virtual.surgeries_by_cat[dx_cat]['count'], office.surgeries_by_cat[dx_cat]['count']]
+    totals = [virtual.diagnosis_cats[dx_cat], office.diagnosis_cats[dx_cat]]
+    p3 = histo_contingency(obs, totals, dx_cat)
+
+    return [p1, p2, p3]
+
+def get_box_p_vals(virtual, office, dx_cat):
+    p_vals = []
+    for i, (g1, g2) in enumerate(zip(virtual, office)):
+        t_test = ttest_ind(g1, g2)
+        p_vals.append(t_test.pvalue)
+    return p_vals
+
+def set_significances(ax, plot_spots, virtual, office, p_vals, plot='histo'):
+    if plot == 'histo':
+        interleave = [val for pair in zip(virtual, office) for val in pair]
+    elif plot == 'box':
+        interleave = []
+        for i, (g1, g2)in enumerate(zip(virtual, office)):
+            q75, q25 = np.percentile(g1, [75, 25])
+            interleave.append(q75 + 1.5*(q75-q25))
+            q75, q25 = np.percentile(g2, [75, 25])
+            interleave.append(q75 + 1.5*(q75-q25))
+        ax.set_ylim(bottom=-5, top=(max(interleave)+10))
+    for i, p in enumerate(p_vals):
+        if p > 0.05:
+            text = 'n.s.'
+        elif p > 0.005:
+            text = '*'
+        elif p > 0.0005:
+            text = '**'
+        elif p > 0.00005:
+            text = '***'
+        elif p > 0.000005:
+            text = '****'
+        elif p > 0.0000005:
+            text = '*****'
+        else:
+            text = '******'
+        label_diff(ax, 2*i, 2*i + 1, text, plot_spots, interleave, plot)
+    return
+
+
+
 def category_histograms(virtual, office, config):
     os.makedirs(config.figures_dir, exist_ok=True)
     plt.close('all')
-    width = 0.2
+    width = 0.4
+    bar_width = 0.2
+    bar_spots = []
+    for x in range(3):
+        bar_spots.append(x-bar_width)
+        bar_spots.append(x+bar_width)
     x = np.arange(3)
-    labels = ['virtual', 'office']
     bar_labels = ['Percent of\ntotal patients', 'Percent of category\npatients with procedure', 'Percent of category\npatients with surgery']
     box_labels = ['Visit to procedure', 'Scheduling to visit', 'Scheduling to procedure']
     for i, dx_cat in enumerate(config.dx_category_list):
+        if dx_cat == 'Unclassified':
+            continue
         plt.clf()
+        labels = [f'virtual (N = {virtual.diagnosis_cats[dx_cat]})', f'office (N = {office.diagnosis_cats[dx_cat]})']
         fig, axs = plt.subplots(1,2, tight_layout=True, figsize=(12, 4))
         fig.suptitle(f'{dx_cat} Patients')
         ax = axs[0]
         ax.set_ylim(bottom=0, top=100)
         ax.set_ylabel('Percentage')
-        virtual.completed_procedures_by_cat[dx_cat]
+
         virtual_heights = [percentage_with_zero(virtual.diagnosis_cats[dx_cat], virtual.pt_count),
         percentage_with_zero(virtual.completed_procedures_by_cat[dx_cat]['count'], virtual.diagnosis_cats[dx_cat]),
         percentage_with_zero(virtual.surgeries_by_cat[dx_cat]['count'], virtual.diagnosis_cats[dx_cat])]
@@ -1817,11 +2011,15 @@ def category_histograms(virtual, office, config):
         percentage_with_zero(office.completed_procedures_by_cat[dx_cat]['count'], office.diagnosis_cats[dx_cat]),
         percentage_with_zero(office.surgeries_by_cat[dx_cat]['count'], office.diagnosis_cats[dx_cat])]
 
+        p_vals = get_histo_p_vals(virtual, office, dx_cat)
+
         ax.bar(x-width/2, virtual_heights, width, label=labels[0], color='#2C7BB6')
         ax.bar(x+width/2, office_heights, width, label=labels[1], color='#D7191C')
         ax.legend(loc='upper right')
         ax.set_xticks(range(3))
         ax.set_xticklabels(bar_labels)
+
+        set_significances(ax, bar_spots, virtual_heights, office_heights, p_vals)
 
         ax = axs[1]
         virtual_arrs = [virtual.first_visit_to_first_procedure_dxcat[dx_cat]['arr'],
@@ -1832,12 +2030,16 @@ def category_histograms(virtual, office, config):
         office.scheduling_to_first_visit_dxcat[dx_cat]['arr'],
         office.scheduling_to_first_procedure_dxcat[dx_cat]['arr']]
 
+
         bpl = ax.boxplot(virtual_arrs, positions=np.array(range(len(virtual_arrs)))*2.0-0.4, sym='', widths=0.6)
         bpr = ax.boxplot(office_arrs, positions=np.array(range(len(office_arrs)))*2.0+0.4, sym='', widths=0.6)
-
+        box_spots = [val for pair in zip(np.array(range(len(virtual_arrs)))*2.0-0.4, np.array(range(len(office_arrs)))*2.0+0.4) for val in pair]
         ax.set_xticks(range(0,6,2))
         ax.set_xticklabels(box_labels)
         ax.set_ylabel('days')
+
+        p_vals = get_box_p_vals(virtual_arrs, office_arrs, dx_cat)
+        set_significances(ax, box_spots, virtual_arrs, office_arrs, p_vals, plot='box')
         
         set_box_color(bpl, '#2C7BB6') # colors are from http://colorbrewer2.org/
         set_box_color(bpr, '#D7191C')
@@ -1866,8 +2068,6 @@ def write_output_csv(body, rows, columns, title='output'):
     print(x)
 
 def draw_hist(ax, g1, g2, g3, labels, xlim, title, y_label, x_label='', bins=40):
-    ax.set_xlabel = x_label
-    ax.set_ylabel = y_label
     ax.hist(g1, alpha=0.5, color='gold', bins=bins, label=labels[0])
     ax.hist(g2, alpha=0.5, color='teal', bins=bins, label=labels[1])
     # ax.hist(g3, alpha=0.5, color='green', bins=bins, label=labels[2])
@@ -1876,13 +2076,15 @@ def draw_hist(ax, g1, g2, g3, labels, xlim, title, y_label, x_label='', bins=40)
     ax.text(0.7, 0.6, f'p={round(p2,3)}', horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
     ax.set_xlim([0,xlim])
     ax.set_title(title)
+    ax.set_xlabel('Days')
+    ax.set_ylabel('Count')
 
-def draw_barchart_three(ax, g1, g2, g3, xlabels, labels, title):
-    rects1 = [g1[0], g2[0], g3[0]]
-    rects2 = [g1[1], g2[1], g3[1]]
-    rects3 = [g1[2], g2[2], g3[2]]
+def draw_barchart_three(ax, g1, g2, xlabels, labels, title):
+    rects1 = [g1[0], g2[0]]
+    rects2 = [g1[1], g2[1]]
+    rects3 = [g1[2], g2[2]]
 
-    x = np.arange(3)
+    x = np.arange(len(xlabels))
     width = 0.2
 
     ax.bar(x - width, rects1, width, label=labels[0])
@@ -1894,18 +2096,17 @@ def draw_barchart_three(ax, g1, g2, g3, xlabels, labels, title):
 
     ax.set_title(title)
 
-def draw_barchart_two(ax, g1, g2, g3, xlabels, labels, title):
-    rects1 = [g1[0], g2[0], g3[0]]
-    rects2 = [g1[1], g2[1], g3[1]]
+def draw_barchart_two(ax, g1, g2, colors, xlabels, labels, title):
+    rects1 = [g1[0], g2[0]]
+    rects2 = [g1[1], g2[1]]
 
-    x = np.arange(3)
+    x = np.arange(len(xlabels))
     width = 0.2
 
-    ax.bar(x - width/2, rects1, width, label=labels[0])
-    ax.bar(x + width/2, rects2, width, label=labels[1])
+    ax.bar(x - width/2, rects1, width, label=labels[0], color=color[0])
+    ax.bar(x + width/2, rects2, width, label=labels[1], color = color[1])
     ax.set_xticks(x)
     ax.set_xticklabels(xlabels)
-    ax.legend()
 
     ax.set_title(title)
 
@@ -2013,7 +2214,7 @@ def main(args):
     # need_more_info(patients, config)
     # virtual_cancellations(virtual, config)
     helper_summaries(virtual, office, phone, config)
-    compare_groups(virtual, office, phone)
+    compare_groups(virtual, office, phone, config)
     dx_category_table(virtual, office, phone, config)
     demographics_table(virtual, office, phone, config)
     category_histograms(virtual, office, config)
