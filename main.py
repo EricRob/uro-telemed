@@ -167,6 +167,9 @@ class Config(object):
         'icd_name_list'
         ]
 
+        self.ruca_path = os.path.join('data', 'modified_ruca.csv')
+        self.ruca = pd.read_csv(self.ruca_path)
+
         self.zip_distances_filename = 'data/zip_distances.csv'
         self.zip_distances = pd.read_csv(self.zip_distances_filename, usecols=[1,2,3])
         self.zip_incomes_filename = 'data/zip_incomes.csv'
@@ -963,7 +966,7 @@ class PtClass(object):
     def calculate_distances(self, pt):
         if str(pt.zipcode) in self.zip_df['zipcode'].values:
             row = self.zip_df.loc[self.zip_df['zipcode'] == str(pt.zipcode)]
-            pt.zip_distance = int(row.distance.values[0])
+            pt.zip_distance = int(row.distance.values[0]*0.000621371192)
             pt.zip_duration = int(row.duration.values[0])
         else:
             url = f'https://maps.googleapis.com/maps/api/directions/json?origin={pt.zipcode}&destination=OHSU&key={API_KEY}'
@@ -1365,6 +1368,12 @@ def link_demographics(patients, df, config):
             pt_demo = df.loc[df['MRN'] == demo_mrn].iloc[0]
             pt.race = pt_demo['Race']
             pt.zipcode = pt_demo['Postal Code']
+            if type(pt.zipcode) is int:
+                ruca = config.ruca.loc[config.ruca['zip_code'] == int(pt.zipcode)]['ruca6'].values
+                if ruca.size > 0:
+                    pt.ruca = ruca[0]
+            else:
+                pt.ruca = 'N/A'
             pt.marital_status = pt_demo['Marital Status']
             pt.language = pt_demo['Language']
             pt.county = pt_demo['County']
@@ -2300,6 +2309,7 @@ def patient_dump(virtual, office, config):
             'language',
             'home zipcode',
             'zipcode distance',
+            'ruca',
             'insurance payor',
             'new visit date',
             'scheduling date',
@@ -2310,7 +2320,6 @@ def patient_dump(virtual, office, config):
         writer.writerow(header)
         helper_pt_summary(virtual, writer)
         helper_pt_summary(office, writer)
-    pdb.set_trace()
 
 def helper_pt_summary(pt_class, writer):
 
@@ -2329,10 +2338,11 @@ def helper_pt_summary(pt_class, writer):
             pt.race,
             pt.language,
             pt.zipcode,
-            pt.zip_distance*0.000621371192,
+            pt.zip_distance,
+            pt.ruca,
             pt.payor]
         else:
-            row += ['N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A']
+            row += ['N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A']
         row += [str(pt.earliest_new_date).split()[0], str(pt.earliest_scheduling_date).split()[0]]
         if pt.has_procedure:
             row.append(str(pt.earliest_procedure_date).split()[0])
