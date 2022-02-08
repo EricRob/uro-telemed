@@ -99,6 +99,55 @@ class Config(object):
             # 'Payment issue'
         ]
 
+        self.medicare_payors = [
+        'UHC MEDICARE COMPLETE PPO/POS',
+        'MEDICARE',
+        'HUMANA MEDICARE',
+        'HEALTHNET OPT MEDICARE',
+        'CAREOREGON MEDICARE ADV',
+        'AETNA MEDICARE',
+        'UHC MEDICARE COMPLETE HMO',
+        'PACIFICSOURCE MEDICARE',
+        'PHP MEDICARE',
+        'ATRIO MEDICARE PH TEC',
+        'MODA MEDICARE',
+        'BLUECARD MEDICARE',
+        'SAMARITAN MEDICARE',
+        'KAISER MEDICARE HMO',
+        'RAIL ROAD MEDICARE',
+        'KAISER WASHINGTON MEDICARE',
+        'TRILLIUM MEDICARE',
+        'PROVIDENCE HEALTH MEDICARE',
+        'MEDICARE HMO',
+        'MEDICARE RENAL RECIPIENT EVAL']
+
+        self.medicaid_payors = [
+        'CCO MEDICAID',
+        'MEDICAID WA FED',
+        'MEDICAID OREGON',
+        'MEDICAID OTHER',
+        'MEDICAID MONTANA',
+        'MEDICAID WA STATE',
+        'MEDICAID CALIFORNIA']
+
+        self.kaiser_payors = [
+        'KAISER FOUNDATION HEALTH PLAN',
+        'KAISER MEDICARE HMO',
+        'KAISER OEBB PEBB',
+        'KAISER WASHINGTON MEDICARE',
+        'KAISER WASHINGTON',
+        'KAISER CALIF']
+
+        self.government_payors = [
+        'CORRECTIONS HEALTH PARTNER',
+        'INDIAN HEALTH SERVICE',
+        'MAILHANDLERS',
+        'THE STATE OF OREGON',
+        'US MARSHALS',
+        'WA DEPT OF LABOR AND INDUST',
+        'WARM SPRINGS',
+        'WASHINGTON COUNTY']
+
         self.target_fiscal_month = 0 # March = 9, 0 = off
 
         self.date_variables = [
@@ -292,6 +341,8 @@ class MRN(object):
         self.payor_name = None
         self.primary_diagnosis_icd = None # ICD diagnosis id of the earliest visit
         self.primary_diagnosis_icd_name = None # ICD diagnosis name of the earliest visit
+
+        self.marked = False
 
         
         self.create_encounters(df)
@@ -680,6 +731,8 @@ class PtClass(object):
         self.referral_to_first_procedure_days = self.calc_referral_to_first_procedure_days()
         self.scheduling_to_first_visit_days = self.calc_scheduling_to_first_visit_days()
         self.scheduling_to_first_procedure_days = self.calc_scheduling_to_first_procedure_days()
+        self.scheduling_to_first_surgery_days = self.calc_scheduling_to_first_surgery_days()
+        self.first_visit_to_first_surgery_days = self.calc_first_visit_to_first_surgery_days()
         self.cancelled_appointments = self.calc_cancelled_appointments()
         self.cancelled_procedures = self.calc_cancelled_procedures()
         self.completed_appointments, self.total_appointments = self.calc_completed_appointments()
@@ -777,6 +830,7 @@ class PtClass(object):
                 self.languages.append('Declined / Unknown')
                 self.races.append('Declined / Unknown')
                 self.age_unknown += 1
+            self.insurance = self.sort_payors(pt)
 
         self.config.zip_distances = self.zip_df
         self.lang_count = len(self.languages)
@@ -799,6 +853,18 @@ class PtClass(object):
         self.marital_status.count(1)/self.marital_count,
         self.marital_status.count(2)/self.marital_count,
         ]
+
+    def sort_payors(self, pt):
+        if pt.payor_name in self.config.medicare_payors:
+            pt.payor = 'Medicare'
+        elif pt.payor_name in self.config.medicaid_payors:
+            pt.payor = 'Medicaid'
+        elif pt.payor_name in self.config.kaiser_payors:
+            pt.payor = 'Kaiser'
+        elif pt.payor_name in self.config.government_payors:
+            pt.payor = 'Government org'
+        else:
+            pt.payor = pt.payor_name
 
     def sort_race(self, pt):
         if type(pt.race) is float:
@@ -867,7 +933,7 @@ class PtClass(object):
 
 
     def sort_marital_status(self, pt):
-        knowns = ['Single', 'Married']
+        knowns = ['Single', 'Married', 'Unmarried LTR']
 
         if type(pt.marital_status) is float:
             pt.marital_status = 'Unknown'
@@ -1032,6 +1098,22 @@ class PtClass(object):
                 diff = (first_procedure - scheduling_date).days
                 values.append(diff)
                 self.scheduling_to_first_procedure_dxcat[pt.dx_cat]['arr'].append(diff)
+        return values
+
+    def calc_scheduling_to_first_surgery_days(self):
+        values = []
+        for mrn in self.pt_dict:
+            pt = self.pt_dict[mrn]
+            if pt.has_surgery and pt.has_completed_new_visit:
+                values.append(pt.sched_to_surgery)
+        return values
+
+    def calc_first_visit_to_first_surgery_days(self):
+        values = []
+        for mrn in self.pt_dict:
+            pt = self.pt_dict[mrn]
+            if pt.has_surgery and pt.has_completed_new_visit:
+                values.append(pt.visit_to_surgery)
         return values
 
     def calc_cancelled_appointments(self):
@@ -1510,14 +1592,31 @@ def link_surgeries(patients, df, config):
     # surg_mrns = []
     # for mrn in surg_mrns_raw:
     #     surg_mrns.append(f'{mrn:08}')
+    df['surgery_date'] = pd.to_datetime(df['surgery_date'])
 
     for mrn in patients:
         pt = patients[mrn]
         # mrn = f'{mrn:08}'
         if mrn in surg_mrns:
             pt.has_surgery = True
+            pt_surgeries = df.loc[df['mrn'] == mrn]
+            pt.surgery_count = pt_surgeries.surgery_date.nunique()
+            pt.earliest_surgery_date = pt_surgeries.surgery_date.min()
+            surg_name_list = pt_surgeries.all_procedures.values
+            pt.surg_summary = []
+            for sg in surg_name_list:
+                sg_list = sg.split(' [')
+                sg_name = sg_list[0]
+                sg_cpt = sg_list[1].split(']')[0]
+                pt.surg_summary.append((sg_name, sg_cpt))
+
+            if pt.has_completed_new_visit:
+                pt.visit_to_surgery = (pt.earliest_surgery_date - pt.earliest_completed_date).days
+                pt.sched_to_surgery = (pt.earliest_surgery_date - pt.earliest_scheduling_date).days
+
             surg = df.loc[df['mrn'] == mrn].iloc[0]
             pt.surgery_date = surg.surgery_date
+            pt.all_surgery_dates = pt_surgeries.surgery_date.values
             pt.lead_surgeon = surg.lead_surgeon
             pt.all_surg_names = surg.all_procedures
             pt.all_surg_cpts = re.findall(r"\[(\w+)\]", surg.all_procedures)
@@ -1530,6 +1629,14 @@ def link_surgeries(patients, df, config):
 
         patients[mrn] = pt
 
+def evalute_for_marks(pt):
+    if pt.has_surgery:
+        if pt.has_completed_new_visit:
+            if pt.visit_to_surgery < 0:
+                pt.marked = True
+            if pt.sched_to_surgery < 0:
+                pt.marked = True
+
 def sort_patients(patients, config):
     no_new_visits = []
     virtual_new = []
@@ -1538,15 +1645,20 @@ def sort_patients(patients, config):
 
     for mrn in patients:
         pt = patients[mrn]
-        if pt.has_new:
-            if pt.earliest_completed_type == 'virtual':
-                virtual_new.append(mrn)
-            elif pt.earliest_completed_type == 'office':
-                office_new.append(mrn)
-            elif pt.earliest_completed_type == 'phone':
-                phone_new.append(mrn)
+        evalute_for_marks(pt)
+        if pt.marked:
+            continue
         else:
-            no_new_visits.append(mrn)
+            if pt.has_new:
+                if pt.earliest_completed_type == 'virtual':
+                    virtual_new.append(mrn)
+                elif pt.earliest_completed_type == 'office':
+                    office_new.append(mrn)
+                elif pt.earliest_completed_type == 'phone':
+                    virtual_new.append(mrn)
+                    phone_new.append(mrn)
+            else:
+                no_new_visits.append(mrn)
 
     virtual = PtClass({key: patients[key] for key in virtual_new}, 'virtual', config)
     office = PtClass({key: patients[key] for key in office_new}, 'office', config)
@@ -1609,22 +1721,38 @@ def timing_comparison_table(virtual, office):
     [f'{virt.min()}–{virt.max()}', f'{offi.min()}–{offi.max()}']
     ]
 
+    sched_to_surg = format_timing_table(np.array(virtual.scheduling_to_first_surgery_days), np.array(office.scheduling_to_first_surgery_days))
+    visit_to_surg = format_timing_table(np.array(virtual.first_visit_to_first_surgery_days), np.array(office.first_visit_to_first_surgery_days))
+
     rows = [
     'Scheduling to first visit', 'Mean (std)', 'Median (IQR)', 'Range', '',
     'Scheduling to first procedure', 'Mean (std)', 'Median (IQR)', 'Range', '',
     'Referral to first visit', 'Mean (std)', 'Median (IQR)', 'Range', '',
     'Referral to first procedure', 'Mean (std)', 'Median (IQR)', 'Range', '',
-    'First visit to first procedure', 'Mean (std)', 'Median (IQR)', 'Range'
+    'First visit to first procedure', 'Mean (std)', 'Median (IQR)', 'Range', '',
+    'Scheduling to first surgery', 'Mean (std)', 'Median (IQR)', 'Range', '',
+    'First visit to first surgery', 'Mean (std)', 'Median (IQR)', 'Range',
     ]
 
     body = sched_to_visit + [empty_row]
     body += sched_to_procedure + [empty_row]
     body += ref_to_visit + [empty_row]
     body += ref_to_procedure + [empty_row]
-    body += visit_to_procedure
+    body += visit_to_procedure + [empty_row]
+    body += sched_to_surg + [empty_row]
+    body += visit_to_surg
+    
 
     write_output_csv(body, rows, columns, title='timing_comparison')
     return
+
+def format_timing_table(virtual, office):
+    anova, p2 = f_oneway(virtual, office)
+    row_data = [    [f'N = {virtual.size}', f'N = {office.size}', ''],
+    [f'{virtual.mean():.1f} ({virtual.std():.1f})', f'{office.mean():.1f} ({office.std():.1f})', f'p = {p2:.3f}'],
+    [f'{np.median(virtual)} ({np.percentile(virtual, 25)}–{np.percentile(virtual, 75)})', f'{np.median(office)} ({np.percentile(office, 25)}–{np.percentile(office, 75)})'],
+    [f'{virtual.min()}–{virtual.max()}', f'{office.min()}–{office.max()}']]
+    return row_data
 
 def compare_groups(virtual, office, phone, config):
     plt.close('all')
@@ -1649,15 +1777,20 @@ def compare_groups(virtual, office, phone, config):
         phone.scheduling_to_first_visit_days,
         labels, 110, 'Scheduling to first visit', 'Days')
     draw_hist(axs[1,1],
-        virtual.referral_to_first_visit_days,
-        office.referral_to_first_visit_days,
-        phone.referral_to_first_visit_days,
-        labels, 400,'Referral to first visit', 'Days')
+        virtual.first_visit_to_first_surgery_days,
+        office.first_visit_to_first_surgery_days,
+        phone.first_visit_to_first_surgery_days,
+        labels, 400,'First visit to first surgery', 'Days')
     draw_hist(axs[2,0],
         virtual.scheduling_to_first_procedure_days,
         office.scheduling_to_first_procedure_days,
         phone.scheduling_to_first_procedure_days,
         labels, 200,'Scheduling to first procedure', 'Days')
+    draw_hist(axs[2,1],
+        virtual.scheduling_to_first_surgery_days,
+        office.scheduling_to_first_surgery_days,
+        phone.scheduling_to_first_surgery_days,
+        labels, 200,'Scheduling to first surgery', 'Days')
     axs[0,1].legend(loc='upper right')
 
     # draw_barchart_two(axs[0,1], virtual.legal_sex_portions, office.legal_sex_portions, phone.legal_sex_portions, labels, legal_sex_labels, "Legal sex portions")
@@ -2127,6 +2260,128 @@ def helper_summaries(virtual, office, phone, config):
         for mrn in office.sched_to_visit_zero_days:
             pt = office.pt_dict[mrn]
             writer.writerow([pt.mrn, pt.pt_name, 'office', pt.earliest_completed_type, pt.earliest_referral_date, pt.earliest_scheduling_date, pt.earliest_completed_date])
+
+    all_procedures = dict()
+    for mrn in virtual.pt_dict:
+        pt = virtual.pt_dict[mrn]
+        if pt.primary_diagnosis_icd_name not in all_procedures:
+            all_procedures[pt.primary_diagnosis_icd_name] = dict()
+            all_procedures[pt.primary_diagnosis_icd_name]['surgeries'] = set()
+            all_procedures[pt.primary_diagnosis_icd_name]['provider'] = set()
+            all_procedures[pt.primary_diagnosis_icd_name]['count'] = 0
+
+        helper_category_list(all_procedures, pt)
+
+    for mrn in office.pt_dict:
+        pt = office.pt_dict[mrn]
+        if pt.primary_diagnosis_icd_name not in all_procedures:
+            all_procedures[pt.primary_diagnosis_icd_name] = dict()
+            all_procedures[pt.primary_diagnosis_icd_name]['surgeries'] = set()
+            all_procedures[pt.primary_diagnosis_icd_name]['provider'] = set()
+            all_procedures[pt.primary_diagnosis_icd_name]['count'] = 0
+        prov_max = helper_category_list(all_procedures, pt)
+
+    write_helper_category(all_procedures, config)
+
+    patient_dump(virtual, office, config)
+
+def patient_dump(virtual, office, config):
+    pt_dump_csv = os.path.join(config.helper_dir, 'all_patients.csv')
+    header = ['mrn',
+            'name',
+            'new visit type',
+            'primary diagnosis',
+            'diagnosis category',
+            'age',
+            'sex',
+            'marital_status',
+            'ethnicity',
+            'race',
+            'language',
+            'home zipcode',
+            'zipcode distance',
+            'insurance payor',
+            'new visit date',
+            'scheduling date',
+            'procedure date',
+            'surgery date']
+    with open(pt_dump_csv, 'w') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(header)
+        helper_pt_summary(virtual, writer)
+        helper_pt_summary(office, writer)
+    pdb.set_trace()
+
+def helper_pt_summary(pt_class, writer):
+
+    for mrn in pt_class.pt_dict:
+        pt = pt_class.pt_dict[mrn]
+        row = [pt.mrn,
+        pt.pt_name,
+        pt_class.type,
+        pt.primary_diagnosis_icd_name,
+        pt.dx_cat]
+        if pt.has_demo:
+            row += [int(pt.age),
+            pt.legal_sex,
+            pt.marital_status,
+            pt.ethnic_group,
+            pt.race,
+            pt.language,
+            pt.zipcode,
+            pt.zip_distance*0.000621371192,
+            pt.payor]
+        else:
+            row += ['N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A']
+        row += [str(pt.earliest_new_date).split()[0], str(pt.earliest_scheduling_date).split()[0]]
+        if pt.has_procedure:
+            row.append(str(pt.earliest_procedure_date).split()[0])
+        else:
+            row.append('N/A')
+        if pt.has_surgery:
+            row.append(str(pt.earliest_surgery_date).split()[0])
+        else:
+            row.append('N/A')
+        writer.writerow(row)
+
+def helper_category_list(all_procedures, pt):
+    if pt.has_surgery:
+        for sg in pt.surg_summary:
+            all_procedures[pt.primary_diagnosis_icd_name]['surgeries'].add(sg)
+    for pro in pt.provider_list:
+        all_procedures[pt.primary_diagnosis_icd_name]['provider'].add(pro)
+    all_procedures[pt.primary_diagnosis_icd_name]['count'] += 1
+
+def write_helper_category(all_procedures, config):
+    prov_max = 0
+    for proc in all_procedures:
+        if len(all_procedures[proc]['provider']) > prov_max:
+            prov_max = len(all_procedures[proc]['provider'])
+
+    surg_max = 0
+    for proc in all_procedures:
+        if len(all_procedures[proc]['surgeries']) > surg_max:
+            surg_max = len(all_procedures[proc]['surgeries'])
+    header = ['primary diagnosis', 'pt with primary diagnosis']
+    for x in range(prov_max):
+        header += [f'provider {x + 1}']
+    for x in range(surg_max):
+        header += [f'surgery {x + 1}']
+
+    helper_csv = os.path.join(config.helper_dir, 'diagnosis_categories.csv')
+    with open(helper_csv, 'w') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(header)
+        for proc in all_procedures:
+            row = []
+            row.append(proc)
+            row.append(all_procedures[proc]['count'])
+            row += all_procedures[proc]['provider']
+            while(len(row) < prov_max + 1):
+                row.append('')
+            for surg in all_procedures[proc]['surgeries']:
+                row += [surg[0]]
+            writer.writerow(row)
 
 def need_more_info(patients, config):
     max_prov = 0
