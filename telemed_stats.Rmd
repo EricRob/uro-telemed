@@ -1,0 +1,411 @@
+---
+title: "telemed_script"
+author: "Eric Robinson"
+date: '2022-03-23'
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE, warning = FALSE, echo= FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  results = 'asis',
+  quiet = TRUE
+)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(gtsummary)
+library(kableExtra)
+library(rio)
+library(writexl)
+library(xlsx)
+library(here)
+
+md <- read_csv("~/Documents/GitHub/uro-telemed/helpers/all_patients.csv", 
+                        col_types = cols(age = col_integer(), 
+                        new_visit_date = col_date(format = "%Y-%m-%d"),
+                        scheduling_date = col_date(format = "%Y-%m-%d"),
+                        procedure_date = col_date(format = "%Y-%m-%d"),
+                        referral_to_first_procedure = col_integer(),
+                        first_visit_to_first_procedure = col_integer(),
+                        first_visit_to_surgery = col_integer()))
+md$marital_status[md$marital_status=="Unknown"] <- NA
+md$sex[md$sex=="Unknown"] <- NA
+md$race[md$race=="Declined / Unknown"] <- NA
+md$language[md$language=="Declined / Unknown"] <- NA
+md$has_appt_cancellation <- md$appt_cancellation > 0
+```
+
+## Table 1
+```{r table1}
+
+md2 <-
+  md %>% select(new_visit_type,
+                diagnosis_category,
+                age,
+                sex,
+                marital_status,
+                race,
+                language,
+                ruca)
+tbl1 <- md2 %>% tbl_summary(
+  by = new_visit_type,
+  statistic = list(
+    all_continuous() ~ "{mean} ({sd})",
+    all_categorical() ~ "{n} ({p}%)"
+  ),
+  digits = all_continuous() ~ 1,
+  missing_text = "(Missing)"
+) %>%
+  add_overall() %>%
+  add_n() %>%
+  add_p(
+    pvalue_fun = function(x)
+      style_pvalue(x, digits = 3)
+  ) %>%
+  as_tibble()
+
+write.xlsx(tbl1, here("r_output", "tbl1.xlsx"))
+```
+
+## Table 2
+```{r table2}
+
+tbl2 <- md %>%
+  select(
+    new_visit_type,
+    has_appt_cancellation,
+    has_procedure,
+    procedure_cancellation,
+    has_surgery
+  ) %>%
+  tbl_summary(
+    by = new_visit_type,
+    statistic = list(all_categorical() ~ "{n} ({p}%)"),
+    label = list(
+      has_appt_cancellation ~ "Appointment Cancellations",
+      has_procedure ~ "Underwent procedure",
+      procedure_cancellation ~ "Procedure Cancellations",
+      has_surgery ~ "Underwent surgery"
+    ),
+    missing = "no"
+  ) %>%
+  add_p(
+    pvalue_fun = function(x) style_pvalue(x,digits = 3)
+  ) %>%
+  as_tibble()
+
+write.xlsx(tbl2, here("r_output", "tbl2.xlsx"))
+ 
+```
+
+## Table 3
+```{r table3}
+md3 <- md %>%
+  select(
+    new_visit_type,
+    referral_to_first_visit,
+    scheduling_to_first_visit,
+    scheduling_to_first_procedure,
+    referral_to_first_procedure,
+    first_visit_to_first_procedure,
+    first_visit_to_surgery
+  )
+tbl3 <- md3 %>% tbl_summary(
+  by = new_visit_type,
+  statistic = list(all_continuous() ~ "{mean} ({sd})"),
+  label = list(
+    referral_to_first_visit ~ "Referral date to first visit",
+    scheduling_to_first_visit ~ "Scheduling date to first visit",
+    scheduling_to_first_procedure ~ "Scheduling date to first procedure",
+    referral_to_first_procedure ~ "Referral date to first procedure",
+    first_visit_to_first_procedure ~ "First visit to first procedure",
+    first_visit_to_surgery ~ "First visit to first surgery"
+  ),
+  digits = all_continuous() ~ 1,
+  missing = "no"
+) %>%
+  add_p(
+    pvalue_fun = function(x)
+      style_pvalue(x, digits = 3),
+    simulate.p.value = TRUE
+  ) %>%
+  as_tibble()
+
+write.xlsx(tbl3, here("r_output", "tbl3.xlsx"))
+```
+
+## Table 4
+```{r table4ages}
+age_intervals = c(18, 30, 45, 60, 75, 1000)
+tbl4ages <- md %>%
+  select(new_visit_type,
+         age,
+         has_appt_cancellation,
+         procedure_cancellation,
+         has_procedure,
+         has_surgery) %>%
+  mutate(age_groups = cut(age, age_intervals, include.lowest = TRUE, right = FALSE)) %>%
+  group_nest(age_groups)%>%
+  mutate(tbl = map2(
+    age_groups,
+    data,
+    ~ tbl_summary(
+      .y,
+      by = new_visit_type,
+      statistic = list(all_categorical() ~ "{n} ({p}%)", age ~ "N = {N_nonmiss}"),
+      label = list(
+        age = paste("ages", .x),
+        has_appt_cancellation = paste("Has appt cancellation -", .x),
+        procedure_cancellation = paste("Has procedure cancellation -", .x),
+        has_procedure = paste("Has procedure -", .x),
+        has_surgery = paste("Has surgery -", .x)
+      ),
+      missing = "no",
+      digits = all_continuous() ~ 0,
+    ) %>% 
+      add_p(
+        pvalue_fun = function(x) style_pvalue(x,digits = 3),
+        simulate.p.value = TRUE
+      )
+  )) %>%
+  pull(tbl) %>%
+  tbl_stack() %>%
+  as_tibble()
+
+write.xlsx(tbl4ages, here("r_output", "tbl4age.xlsx"))
+  
+```
+```{r table4zips}
+zip_intervals <- c(0, 25, 50, 100, 1000000)
+tbl4zips <- md %>%
+  select(new_visit_type,
+         zipcode_distance,
+         has_appt_cancellation,
+         procedure_cancellation,
+         has_procedure,
+         has_surgery) %>%
+  mutate(zip_groups = cut(zipcode_distance, zip_intervals, include.lowest = TRUE, right = FALSE)) %>%
+  group_nest(zip_groups)%>%
+  mutate(tbl = map2(
+    zip_groups,
+    data,
+    ~ tbl_summary(
+      .y,
+      by = new_visit_type,
+      statistic = list(all_categorical() ~ "{n} ({p}%)", zipcode_distance ~ "N = {N_nonmiss}"),
+      label = list(
+        zipcode_distance = paste("Zipcode Distance", .x),
+        has_appt_cancellation = paste("Has appt cancellation -", .x),
+        procedure_cancellation = paste("Has procedure cancellation -", .x),
+        has_procedure = paste("Has procedure -", .x),
+        has_surgery = paste("Has surgery -", .x)
+      ),
+      missing = "no",
+      digits = zipcode_distance ~ 0
+    ) %>% 
+      add_p(
+        pvalue_fun = function(x) style_pvalue(x,digits = 3),
+        simulate.p.value = TRUE
+      )
+  )) %>%
+  pull(tbl) %>%
+  tbl_stack() %>%
+  as_tibble()
+write.xlsx(tbl4zips, here("r_output", "tbl4zips.xlsx"))
+
+```
+```{r table4dems}
+dem_vars <-
+  list("sex",
+       "marital_status",
+       "language",
+       "diagnosis_category",
+       "ruca",
+       "race")
+for (dem_var in dem_vars) {
+  crossTable <- 
+    md %>%
+    tbl_cross(
+      row = !!as.name(dem_var),
+      col = new_visit_type,
+      percent = "column",
+      missing = "no"
+    ) %>%
+    add_p(simulate.p.value=TRUE) %>%
+    modify_caption(paste(dem_var, "totals")) %>%
+    as_tibble()
+  write.xlsx(crossTable, here("r_output", paste("tbl4cross_", dem_var, ".xlsx", sep = "")))
+  
+  tbl4_dems <- md %>%
+  select(new_visit_type,
+         !!as.name(dem_var),
+         has_appt_cancellation,
+         procedure_cancellation,
+         has_procedure,
+         has_surgery) %>%
+  group_nest(!!as.name(dem_var))%>%
+  mutate(tbl = map2(
+    !!as.name(dem_var),
+    data,
+    ~ tbl_summary(
+      .y,
+      by = new_visit_type,
+      statistic = list(all_categorical() ~ "{n} ({p}%)"),
+      label = list(
+        has_appt_cancellation = paste("Has appt cancellation -", .x),
+        procedure_cancellation = paste("Has procedure cancellation -", .x),
+        has_procedure = paste("Has procedure -", .x),
+        has_surgery = paste("Has surgery -", .x)
+      ),
+      missing = "no",
+      digits = all_continuous() ~ 0
+    ) %>% 
+      add_p(
+        pvalue_fun = function(x) style_pvalue(x,digits = 3),
+        simulate.p.value = TRUE
+      ) %>%
+      modify_caption(paste(dem_var, "summary"))
+  )) %>%
+  pull(tbl) %>%
+  tbl_stack() %>%
+  as_tibble()
+write.xlsx(tbl4_dems, here("r_output", paste("tbl4summary_", dem_var, ".xlsx", sep = "")))
+}
+
+```
+## Table 5
+```{r table5ages}
+tbl5_age <- md %>%
+  select(
+    new_visit_type,
+    age,
+    referral_to_first_visit,
+    referral_to_first_procedure,
+    scheduling_to_first_visit,
+    scheduling_to_first_procedure,
+    first_visit_to_first_procedure,
+    first_visit_to_surgery
+  ) %>%
+  mutate(age_groups = cut(age, age_intervals, include.lowest = TRUE, right = FALSE)) %>%
+  group_nest(age_groups) %>%
+  mutate(tbl = map2(
+    age_groups,
+    data,
+    ~ tbl_summary(
+      .y,
+      by = new_visit_type,
+      type = list(everything() ~ 'continuous'),
+      statistic = list(everything() ~ "{mean} - {sd} - {N_nonmiss}", age ~ "N = {N_nonmiss}"),
+      label = list(
+        age = paste("ages", .x),
+        referral_to_first_visit = paste("ref_to_visit", .x),
+        referral_to_first_procedure = paste("referral_to_first_procedure", .x),
+        scheduling_to_first_visit = paste("sched_to_visit", .x),
+        scheduling_to_first_procedure = paste("scheduling_to_first_procedure", .x),
+        first_visit_to_first_procedure = paste("first_visit_to_first_procedure", .x),
+        first_visit_to_surgery = paste("first_visit_to_surgery", .x)
+      ),
+      missing = "no",
+      digits = list(all_continuous() ~ 1),
+    ) %>% add_p(
+      pvalue_fun = function(x) style_pvalue(x,digits = 3)
+    ) %>%
+      modify_caption("age interval summary")
+  )) %>%
+  pull(tbl) %>%
+  tbl_stack() %>%
+  as_tibble()
+
+write.xlsx(tbl5_age, here("r_output", paste("tbl5age", ".xlsx", sep = "")))
+```
+```{r table5zips}
+tbl5_zip <- md %>%
+  select(
+    new_visit_type,
+    zipcode_distance,
+    referral_to_first_visit,
+    referral_to_first_procedure,
+    scheduling_to_first_visit,
+    scheduling_to_first_procedure,
+    first_visit_to_first_procedure,
+    first_visit_to_surgery
+  ) %>%
+  mutate(zip_groups = cut(zipcode_distance, zip_intervals, include.lowest = TRUE, right = FALSE)) %>%
+  group_nest(zip_groups) %>%
+  mutate(tbl = map2(
+    zip_groups,
+    data,
+    ~ tbl_summary(
+      .y,
+      by = new_visit_type,
+      type = list(everything() ~ 'continuous'),
+      statistic = list(everything() ~ "{mean} - {sd} - {N_nonmiss}", zipcode_distance ~ "N = {N_nonmiss}"),
+      label = list(
+        zipcode_distance = paste("Zipcode range", .x),
+        referral_to_first_visit = paste("ref_to_visit", .x),
+        referral_to_first_procedure = paste("referral_to_first_procedure", .x),
+        scheduling_to_first_visit = paste("sched_to_visit", .x),
+        scheduling_to_first_procedure = paste("scheduling_to_first_procedure", .x),
+        first_visit_to_first_procedure = paste("first_visit_to_first_procedure", .x),
+        first_visit_to_surgery = paste("first_visit_to_surgery", .x)
+      ),
+      missing = "no",
+      digits = list(all_continuous() ~ 1),
+    ) %>% add_p(
+      pvalue_fun = function(x) style_pvalue(x,digits = 3) 
+    ) %>%
+      modify_caption("Zipcode distance interval summary")
+  )) %>%
+  pull(tbl) %>%
+  tbl_stack() %>%
+  as_tibble()
+
+write.xlsx(tbl5_zip, here("r_output", paste("tbl5zip", ".xlsx", sep = "")))
+```
+```{r table5dems}
+for (dem_var in dem_vars) {
+tbl5_dem <- md %>%
+  select(
+    new_visit_type,
+    !!as.name(dem_var),
+    referral_to_first_visit,
+    referral_to_first_procedure,
+    scheduling_to_first_visit,
+    scheduling_to_first_procedure,
+    first_visit_to_first_procedure,
+    first_visit_to_surgery
+  ) %>%
+  group_nest(!!as.name(dem_var)) %>%
+  mutate(tbl = map2(
+    !!as.name(dem_var),
+    data,
+    ~ tbl_summary(
+      .y,
+      by = new_visit_type,
+      type = list(everything() ~ 'continuous'),
+      statistic = everything() ~ "{mean} - {sd} - {N_nonmiss}",
+      label = list(
+        referral_to_first_visit = paste("ref_to_visit", .x),
+        referral_to_first_procedure = paste("referral_to_first_procedure", .x),
+        scheduling_to_first_visit = paste("sched_to_visit", .x),
+        scheduling_to_first_procedure = paste("scheduling_to_first_procedure", .x),
+        first_visit_to_first_procedure = paste("first_visit_to_first_procedure", .x),
+        first_visit_to_surgery = paste("first_visit_to_surgery", .x)
+      ),
+      missing = "no",
+      digits = list(all_continuous() ~ 1),
+    ) %>%
+      add_p() %>%
+      modify_caption(paste(dem_var, "summary"))
+  )) %>%
+  pull(tbl) %>%
+  tbl_stack() %>%
+  as_tibble()
+
+write.xlsx(tbl5_dem, here("r_output", paste("tbl5summary_", dem_var, ".xlsx", sep = "")))
+}
+```

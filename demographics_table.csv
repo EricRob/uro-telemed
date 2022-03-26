@@ -22,14 +22,13 @@ Non-hispanic,454 (73.6%),697 (66.4%),44 (72.1%),
 Declined / Unknown,134 (21.7%),284 (27.1%),13 (21.3%),
 ,,,,
 "Race, n (%)",N = 617,N = 1049,N = 1049,chi-square
-American Indian/Alaska Native,3 (0.5%),10 (1.0%),10 (1.0%),p = 0.088
-Asian / Pacific Islander,9 (1.5%),30 (2.9%),30 (2.9%),
-Black,15 (2.4%),22 (2.1%),22 (2.1%),
+American Indian or Alaska Native,3 (0.5%),10 (1.0%),10 (1.0%),p = 0.059
+Asian or Pacific Islander,9 (1.5%),30 (2.9%),30 (2.9%),
 Declined / Unknown,109 (17.7%),215 (20.5%),215 (20.5%),
+Hispanic,28 (4.5%),66 (6.3%),66 (6.3%),
 Multiracial,17 (2.8%),17 (1.6%),17 (1.6%),
-Non-white Hispanic,14 (2.3%),29 (2.8%),29 (2.8%),
-White,436 (70.7%),689 (65.7%),689 (65.7%),
-White Hispanic,14 (2.3%),37 (3.5%),37 (3.5%),
+"Non-Hispanic, Black",15 (2.4%),22 (2.1%),22 (2.1%),
+"Non-Hispanic, White",436 (70.7%),689 (65.7%),689 (65.7%),
 ,,,,
 "Language, n (%)",N = 617,N = 1049,N = 61,chi-square
 English,566 (91.7%),908 (86.6%),57 (93.4%),p = 0.000

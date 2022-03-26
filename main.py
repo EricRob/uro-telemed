@@ -347,6 +347,11 @@ class MRN(object):
 
         self.marked = False
 
+        self.scheduling_to_first_visit_days = 0
+        self.referral_to_first_procedure_days = 0
+        self.scheduling_to_first_procedure_days = 0
+        self.first_visit_to_first_procedure_days = 0
+
         
         self.create_encounters(df)
         self.analyze_encounters(df)
@@ -898,18 +903,15 @@ class PtClass(object):
         if len(races) > 1:
             pt.race = 'Multiracial'
         elif pt.ethnic_group == 'Hispanic':
-            if races[0] == 'White':
-                pt.race = 'White Hispanic'
-            else:
-                pt.race = 'Non-white Hispanic'
+            pt.race = 'Hispanic'
         elif races[0] == 'White':
-            pt.race = 'White'
+            pt.race = 'Non-Hispanic, White'
         elif races[0] == 'Black':
-            pt.race = 'Black'
+            pt.race = 'Non-Hispanic, Black'
         elif races[0] == 'Asian / Pacific Islander':
-            pt.race = 'Asian / Pacific Islander'
+            pt.race = 'Asian or Pacific Islander'
         elif races[0] == 'American Indian / Alaska Native':
-            pt.race = 'American Indian / Alaska Native'
+            pt.race = 'American Indian or Alaska Native'
         self.race_set.add(pt.race)
         self.races.append(pt.race)
 
@@ -1047,6 +1049,7 @@ class PtClass(object):
                 diff = (first_procedure - earliest_visit).days
                 values.append(diff)
                 self.first_visit_to_first_procedure_dxcat[pt.dx_cat]['arr'].append(diff)
+                pt.first_visit_to_first_procedure_days = diff
         return values
 
     def calc_referral_to_first_visit_days(self):
@@ -1057,6 +1060,7 @@ class PtClass(object):
                 visit = pt.earliest_completed_date
                 referral_date = pt.earliest_referral_date
                 diff = (visit - referral_date).days
+                pt.referral_to_first_visit_days = diff
                 values.append(diff)
         return values
 
@@ -1072,7 +1076,9 @@ class PtClass(object):
                     self.completed_procedures_by_cat[pt.dx_cat]['count'] += 1
                 referral_date = pt.earliest_referral_date
                 first_procedure = pt.earliest_procedure_date
-                values.append((first_procedure - referral_date).days)
+                diff = (first_procedure - referral_date).days
+                values.append(diff)
+                pt.referral_to_first_procedure_days = diff
         return values
 
     def calc_scheduling_to_first_visit_days(self):
@@ -1087,6 +1093,7 @@ class PtClass(object):
                 if diff < 3:
                     self.sched_to_visit_zero_days.append(mrn)
                 values.append(diff)
+                pt.scheduling_to_first_visit_days = diff
                 self.scheduling_to_first_visit_dxcat[pt.dx_cat]['arr'].append(diff)
 
         return values
@@ -1101,6 +1108,7 @@ class PtClass(object):
                 diff = (first_procedure - scheduling_date).days
                 values.append(diff)
                 self.scheduling_to_first_procedure_dxcat[pt.dx_cat]['arr'].append(diff)
+                pt.scheduling_to_first_procedure_days = diff
         return values
 
     def calc_scheduling_to_first_surgery_days(self):
@@ -1373,7 +1381,7 @@ def link_demographics(patients, df, config):
                 if ruca.size > 0:
                     pt.ruca = ruca[0]
             else:
-                pt.ruca = 'N/A'
+                pt.ruca = 'NA'
             pt.marital_status = pt_demo['Marital Status']
             pt.language = pt_demo['Language']
             pt.county = pt_demo['County']
@@ -1422,7 +1430,7 @@ def demographics_table(virtual, office, phone, config):
     'Legal Sex, n (%)', 'Male', 'Female', 'Unknown', '',
     'Marital Status, n (%)', 'Married', 'Single', 'Unknown', 'Unmarried LTR', '',
     'Ethnic Group, n (%)', 'Hispanic', 'Non-hispanic', 'Declined / Unknown', '',
-    'Race, n (%)', 'American Indian/Alaska Native', 'Asian / Pacific Islander', 'Black', 'Declined / Unknown', 'Multiracial', 'Non-white Hispanic', 'White', 'White Hispanic', '',
+    'Race, n (%)', 'American Indian or Alaska Native', 'Asian or Pacific Islander', 'Declined / Unknown', 'Hispanic', 'Multiracial', 'Non-Hispanic, Black', 'Non-Hispanic, White', '',
     'Language, n (%)', 'English', 'Interpreter Needed', 'Declined / Unknown'
     ]
 
@@ -2298,23 +2306,35 @@ def patient_dump(virtual, office, config):
     pt_dump_csv = os.path.join(config.helper_dir, 'all_patients.csv')
     header = ['mrn',
             'name',
-            'new visit type',
-            'primary diagnosis',
-            'diagnosis category',
+            'new_visit_type',
+            'primary_diagnosis',
+            'diagnosis_category',
             'age',
             'sex',
             'marital_status',
             'ethnicity',
             'race',
             'language',
-            'home zipcode',
-            'zipcode distance',
+            'home_zipcode',
+            'zipcode_distance',
             'ruca',
-            'insurance payor',
-            'new visit date',
-            'scheduling date',
-            'procedure date',
-            'surgery date']
+            'insurance_payor',
+            'new_visit_date',
+            'scheduling_date',
+            'procedure_date',
+            'surgery_date',
+            'appt_cancellation',
+            'procedure_cancellation',
+            'referral_to_first_visit',
+            'scheduling_to_first_visit',
+            'referral_to_first_procedure',
+            'scheduling_to_first_procedure',
+            'first_visit_to_first_procedure',
+            'has_procedure',
+            'has_surgery',
+            'first_visit_to_surgery',
+            'has_demographics'
+            ]
     with open(pt_dump_csv, 'w') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(header)
@@ -2342,16 +2362,33 @@ def helper_pt_summary(pt_class, writer):
             pt.ruca,
             pt.payor]
         else:
-            row += ['N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A']
+            row += ['NA', 'NA', 'NA', 'NA', 'NA', 'NA', 'NA', 'NA', 'NA', 'NA']
         row += [str(pt.earliest_new_date).split()[0], str(pt.earliest_scheduling_date).split()[0]]
         if pt.has_procedure:
             row.append(str(pt.earliest_procedure_date).split()[0])
         else:
-            row.append('N/A')
+            row.append('NA')
         if pt.has_surgery:
             row.append(str(pt.earliest_surgery_date).split()[0])
         else:
-            row.append('N/A')
+            row.append('NA')
+        row += [pt.cancellation_count,
+            pt.has_cancelled_procedure,
+            pt.referral_to_first_visit_days,
+            pt.scheduling_to_first_visit_days]
+        if pt.has_procedure:
+            row += [ pt.referral_to_first_procedure_days,
+            pt.scheduling_to_first_procedure_days,
+            pt.first_visit_to_first_procedure_days]
+        else:
+            row += ['NA', 'NA', 'NA']
+        row.append(str(pt.has_procedure))
+        row.append(str(pt.has_surgery))
+        if pt.has_surgery and pt.has_completed_new_visit:
+            row.append(pt.visit_to_surgery)
+        else:
+            row.append('NA')
+        row.append(pt.has_demo)
         writer.writerow(row)
 
 def helper_category_list(all_procedures, pt):
@@ -2403,15 +2440,15 @@ def need_more_info(patients, config):
         if pt.primary_diagnosis_icd_name in config.need_more_info:
             df_add = {'mrn': f'{mrn:08}', 'primary_diagnosis':pt.primary_diagnosis_icd_name, 'lead_surgeon':pt.lead_surgeon, 'all_surgeries':pt.all_surg_names}
             for k, icd in enumerate(pt.icd_name_list):
-                var = f'icd{k+1}'
+                var = f'diagnosis_{k+1}'
                 df_add[var] = icd
             for k, provider in enumerate(pt.provider_list):
-                var = f'prov{k+1}'
+                var = f'provider_{k+1}'
                 df_add[var] = provider
             more_info = more_info.append(df_add, ignore_index=True)
             mrn_list.append(f'{mrn:08}')
     print('writing more info...')
-    cols = ['mrn', 'primary_diagnosis', 'lead_surgeon', 'all_surgeries', 'icd1', 'icd2', 'icd3', 'icd4', 'prov1', 'prov2', 'prov3']
+    cols = ['mrn', 'primary_diagnosis', 'provider_1', 'lead_surgeon', 'all_surgeries','provider_2', 'provider_3', 'diagnosis_2', 'diagnosis_3', 'diagnosis_4']
     more_info = more_info[cols]
     more_info.to_csv('more_info_needed.csv', index=False)
 
@@ -2476,7 +2513,7 @@ def main(args):
         # with open('data/sorted_patients.pickle', 'wb') as f:
         #     print('Pickling sorted data...')
         #     pickle.dump(sorted_patients, f, pickle.HIGHEST_PROTOCOL)
-    # need_more_info(patients, config)
+    need_more_info(patients, config)
     # virtual_cancellations(virtual, config)
     helper_summaries(virtual, office, phone, config)
     compare_groups(virtual, office, phone, config)
